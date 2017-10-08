@@ -58,7 +58,7 @@
     (fn
       ([] (r-f))
       ([state & inputs] (apply r-f state inputs))
-      ([state] (f state)))))
+      ([state] (f (r-f state))))))
 
 (comment
   (def my-component 
