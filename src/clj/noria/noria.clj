@@ -131,7 +131,13 @@
 
 (defn reconcile-primitive [{:noria/keys [node element children] :as component} new-element r-f ctx]
   (if (not= (get-type element) (get-type new-element))
-    (build-component new-element r-f ctx)
+    (let [[new-component ctx'] (build-component new-element r-f ctx)]
+      [new-component (update ctx' :updates (fn [updates]
+                                             (-> updates
+                                                 (r-f {:noria/update-type :remove
+                                                       :noria/node node})
+                                                 (r-f {:noria/update-type :destroy
+                                                       :noria/node node}))))])
     (let [new-children (get-children new-element)
           [children-reconciled ctx'] (reconcile-children node children new-children r-f ctx)
           old-props (get-props element)
