@@ -38,19 +38,15 @@
                               children)]
     [(persistent! recons) ctx']))
 
-(def ^:dynamic *sink* nil)
-
 (defn build-component [{:keys [key elt] :as element} r-f ctx]
   (if (user-component? element)
-    (let [sink (atom nil)
-          [xf & args] elt
+    (let [[xf & args] elt
           render (xf (fn
-                       ([] nil)
-                       ([x y] (reset! *sink* y) nil)
-                       ([x] x)))
-          [state subst] (binding [*sink* (atom nil)]
-                          [(apply render (render) args) @*sink*])
-          [c-subst ctx'] (build-component {:elt subst
+                       ([] {})
+                       ([state element] (assoc state ::element element))
+                       ([state] state)))
+          state (render (render) args)
+          [c-subst ctx'] (build-component {:elt (::element state)
                                            :key key} r-f ctx)]
       [{:noria/node (:noria/node c-subst)
         :noria/state state
@@ -96,7 +92,7 @@
             new-keys-set (into #{} new-keys)
             ctx-with-removes (update ctx :updates
                                      (fn [updates]
-                                       (transduce (comp (remove #(contains? common component-key))
+                                       (transduce (comp (remove #(contains? common (component-key %)))
                                                         (mapcat
                                                          (fn [{node :noria/node :as child}]
                                                            (let [remove {:noria/update-type :remove
@@ -153,19 +149,17 @@
                                :noria/old-props old-props}))])))
 
 (defn reconcile-user [{:noria/keys [subst render state] :as component} {[_ & args] :elt key :key :as element} r-f ctx]  
-  (let [[state' subst-e] (binding [*sink* (atom ::nil)]
-                         [(apply render state args)
-                          @*sink*])]
-    (if (not= subst-e ::nil)
-      (let [[subst' ctx'] (reconcile subst {:elt subst-e :key key} r-f ctx)]
+  (let [state' (render state args)]
+    (if (:noria/skip-subtree? state')
+      [(assoc component
+              :noria/state state'
+              :noria/element element) ctx]
+      (let [[subst' ctx'] (reconcile subst {:elt (::element state') :key key} r-f ctx)]
         [(assoc component
                 :noria/subst subst'
                 :noria/state state'
                 :noria/element element
-                :noria/node (:noria/node subst')) ctx'])
-      [(assoc component
-              :noria/state state'
-              :noria/element element) ctx])))
+                :noria/node (:noria/node subst')) ctx']))))
 
 (defn reconcile [c element r-f ctx]
   (if (user-component? element)
