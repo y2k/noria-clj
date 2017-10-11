@@ -45,6 +45,7 @@
                        ([] {})
                        ([state element] (assoc state ::element element))
                        ([state] state)))
+          _ (assert (fn? render) {:element element})
           state (render (render) args)
           [c-subst ctx'] (build-component {:elt (::element state)
                                            :key key} r-f ctx)]
@@ -148,7 +149,7 @@
                                :noria/new-props new-props
                                :noria/old-props old-props}))])))
 
-(defn reconcile-user [{:noria/keys [subst render state] :as component} {[_ & args] :elt key :key :as element} r-f ctx]  
+(defn reconcile-user [{:noria/keys [subst render state] :as component} {[_ & args] :elt key :key :as element} r-f ctx]
   (let [state' (render state args)]
     (if (:noria/skip-subtree? state')
       [(assoc component
