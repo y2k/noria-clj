@@ -59,6 +59,12 @@
           [c-components ctx'] (reduce-children #(build-component %1 r-f %2)
                                                (update ctx :next-id inc)
                                                (get-children element))]
+      
+      (assert (= (count (get-children element))
+                 (count (into #{} (map :key) (get-children element))))
+              {:error "keys should be distinct"
+               :keys (map :key (get-children element))})
+      
       [{:noria/node new-node
         :noria/element element
         :noria/children c-components}
@@ -79,75 +85,75 @@
 
 (declare reconcile)
 
+(defn destroy-recursively [component r-f ctx]
+  (let [children (fn [c] (or (:noria/children c)
+                            (some-> (:noria/subst c) (vector))))]
+    (update ctx :updates
+            (fn [updates]
+              (transduce (comp
+                          (map :noria/node)
+                          (dedupe)
+                          (mapcat (fn [node]
+                                    [{:noria/update-type :remove
+                                      :noria/node node}
+                                     {:noria/update-type :destroy
+                                      :noria/node node}])))
+                         r-f
+                         updates
+                         (reverse (tree-seq children children component)))))))
+
 (defn reconcile-children [parent-node children new-children r-f ctx]
   (let [component-key (comp :key :noria/element)
         old-keys (map component-key children)
-        new-keys (map :key new-children)]
-    (if (not= old-keys new-keys)
-      (let [common (into #{} (LCS/lcs (into-array Object old-keys)
-                                      (into-array Object new-keys)))
-            key->component (into {}
-                                 (map (fn [c] [(component-key c) c]))
-                                 children)
-            
-            new-keys-set (into #{} new-keys)
-            ctx-with-removes (update ctx :updates
-                                     (fn [updates]
-                                       (transduce (comp (remove #(contains? common (component-key %)))
-                                                        (mapcat
-                                                         (fn [{node :noria/node :as child}]
-                                                           (let [remove {:noria/update-type :remove
-                                                                         :noria/node node}]
-                                                             (if (contains? new-keys-set (component-key child))
-                                                               [remove]
-                                                               [remove {:noria/update-type :destroy
-                                                                        :noria/node node}])))))
-                                                  r-f updates children)))
-
-            [children-reconciled ctx'] (reduce-children (fn [child ctx]
-                                                          (if-let [old-c (key->component (:key child))]
-                                                            (reconcile old-c child r-f ctx)
-                                                            (build-component child r-f ctx)))
-                                                        ctx-with-removes new-children)]
-        [children-reconciled
-         (update ctx' :updates
-                 (fn [updates]
-                   (transduce (keep-indexed (fn [i {elt :noria/element
-                                                   child-node :noria/node}]
-                                              (when-not (contains? common (:key elt))
-                                                {:noria/update-type :add
-                                                 :noria/index i
-                                                 :noria/child-node child-node
-                                                 :noria/parent-node parent-node})))
-                              conj! updates children-reconciled)))])
-      
-      (reduce-children (fn [[child-c child-e] ctx]
-                         (reconcile child-c child-e r-f ctx))
-                       ctx
-                       (map vector children new-children)))))
+        new-keys (mapv :key new-children)
+        new-keys-set (into #{} new-keys)
+        _ (assert (= (count new-keys) (count new-keys-set)) {:keys new-keys
+                                                             :error "keys should be distinct"})
+        moved? (if (= old-keys new-keys)
+                 (constantly false)
+                 (complement (into #{} (LCS/lcs (into-array Object old-keys)
+                                                (into-array Object new-keys)))))
+        key->component (into {}
+                             (map (fn [c] [(component-key c) c]))
+                             children)
+        ctx-with-destroys (->> children
+                              (remove #(contains? new-keys-set (component-key %)))
+                              (reduce (fn [ctx c]
+                                        (destroy-recursively c r-f ctx)) ctx))]
+    (reduce-children
+     (fn [[i child] ctx]
+       (let [old-c (key->component (:key child))
+             [new-c ctx'] (if (some? old-c)
+                            (reconcile old-c child r-f ctx)
+                            (build-component child r-f ctx))]
+         [new-c (cond-> ctx'
+                  (and (some? old-c) (moved? (:key child)))
+                  (update :updates r-f {:noria/update-type :remove
+                                        :noria/node (:noria/node old-c)})
+                  
+                  (or (not= (:noria/node old-c) (:noria/node new-c))
+                      (moved? (:key child)))
+                  (update :updates r-f {:noria/update-type :add
+                                        :noria/index i
+                                        :noria/child-node (:noria/node new-c)
+                                        :noria/parent-node parent-node}))]))
+     ctx-with-destroys
+     (map vector (range) new-children))))
 
 (defn reconcile-primitive [{:noria/keys [node element children] :as component} new-element r-f ctx]
-  (if (not= (get-type element) (get-type new-element))
-    (let [[new-component ctx'] (build-component new-element r-f ctx)]
-      [new-component (update ctx' :updates (fn [updates]
-                                             (-> updates
-                                                 (r-f {:noria/update-type :remove
-                                                       :noria/node node})
-                                                 (r-f {:noria/update-type :destroy
-                                                       :noria/node node}))))])
-    (let [new-children (get-children new-element)
-          [children-reconciled ctx'] (reconcile-children node children new-children r-f ctx)
-          old-props (get-props element)
-          new-props (get-props new-element)]
-      [(assoc component
-              :noria/element new-element
-              :noria/children children-reconciled)
-       (cond-> ctx'
-         (not= old-props new-props)
-         (update :updates r-f {:noria/update-type :update-props
-                               :noria/node node
-                               :noria/new-props new-props
-                               :noria/old-props old-props}))])))
+  (let [new-children (get-children new-element)
+        [children-reconciled ctx'] (reconcile-children node children new-children r-f ctx)
+        old-props (get-props element)
+        new-props (get-props new-element)]
+    [(assoc component
+            :noria/element new-element
+            :noria/children children-reconciled)
+     (cond-> ctx'
+       (not= old-props new-props)
+       (update :updates r-f {:noria/update-type :update-props
+                             :noria/node node
+                             :noria/new-props new-props
+                             :noria/old-props old-props}))]))
 
 (defn reconcile-user [{:noria/keys [subst render state] :as component} {[_ & args] :elt key :key :as element} r-f ctx]
   (let [state' (render state args)]
@@ -162,8 +168,10 @@
                 :noria/element element
                 :noria/node (:noria/node subst')) ctx']))))
 
-(defn reconcile [c element r-f ctx]
-  (if (user-component? element)
-    (reconcile-user c element r-f ctx)
-    (reconcile-primitive c element r-f ctx)))
-
+(defn reconcile [component element r-f ctx]
+  (if (not= (get-type (:noria/element component)) (get-type element))
+    (let [[new-component ctx'] (build-component element r-f ctx)]
+      [new-component (destroy-recursively component r-f ctx')])
+    (if (user-component? element)
+      (reconcile-user component element r-f ctx)
+      (reconcile-primitive component element r-f ctx))))
