@@ -91,6 +91,10 @@
     (update ctx :updates
             (fn [updates]
               (transduce (comp
+                          (map (fn [component]
+                                 (if (user-component? (:noria/element component))
+                                   ((:noria/render component) (:noria/state component)))
+                                 component))
                           (map :noria/node)
                           (dedupe)
                           (mapcat (fn [node]
