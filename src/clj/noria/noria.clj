@@ -100,14 +100,15 @@
     (reduce-children
      (fn [[i child] ctx]
        (let [old-c (key->component (get-key child))
-             [new-c ctx'] (reconcile (:noria/component-id old-c) child r-f ctx)]
-         [new-c (cond-> ctx'
+             [new-c-id ctx'] (reconcile (:noria/component-id old-c) child r-f ctx)
+             new-c ((:components ctx') new-c-id)]
+         [new-c-id (cond-> ctx'
                   (and (some? old-c) (moved? (get-key child)))
                   (update :updates r-f {:noria/update-type :remove
                                         :noria/node (:noria/node old-c)})
                   
                   (or (not= (:noria/node old-c) (:noria/node new-c))
-                      (moved? (:key child)))
+                      (moved? (get-key child)))
                   (update :updates r-f {:noria/update-type :add
                                         :noria/index i
                                         :noria/child-node (:noria/node new-c)
@@ -160,7 +161,8 @@
                                assoc
                                :noria/state state'
                                :noria/element element)]
-      (let [[subst' ctx''] (reconcile subst (::element state') r-f ctx')]
+      (let [[subst' ctx''] (reconcile subst (::element state') r-f ctx')
+            subst-component ((:components ctx'') subst')]
         [component-id (update-in ctx''
                                  [:components component-id]
                                  assoc
@@ -168,7 +170,7 @@
                                  :noria/subst subst'
                                  :noria/state state'
                                  :noria/element element
-                                 :noria/node (:noria/node subst'))]))))
+                                 :noria/node (:noria/node subst-component))]))))
 
 (defn reconcile [component-id element r-f ctx]
   (let [component ((:components ctx) component-id)
@@ -188,23 +190,24 @@
                                 :noria/props {:text (str x)}})))
 
   (def my-container
-    (noria.components/render (fn [_]
+    (noria.components/render (fn [i]
                                {:noria/type :div
-                                :children [^{:noria/key "xy"} [my-label 10]
-                                                 ^{:noria/key "xyzw"} [my-label 12]]
-                                :noria/props {:orientation :vertical}})))
+                                :noria/props {:orientation :vertical}
+                                :children (map (fn [i]
+                                                 ^{:noria/key i} [my-label i])
+                                               (range i))})))
 
   
-  (let [[c-id ctx] (reconcile nil [my-container 42] conj {:updates []
-                                                          :components {}
-                                                          :next-component-id 0
-                                                          :next-id 0})]
+  (let [[c-id ctx] (reconcile nil [my-container 1] conj {:updates []
+                                                         :components {}
+                                                         :next-component-id 0
+                                                         :next-id 0})]
     (def c-id c-id)
     (def ctx ctx))
 
   
 
-  (reconcile c-id [my-container 42] conj (assoc ctx :updates []))
+  (reconcile c-id [my-container 2] conj (assoc ctx :updates []))
 
 
   
