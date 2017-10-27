@@ -30,7 +30,11 @@
                    [{} (transient [])]
                    elements))))
 
-(def user-component? vector?)
+(defn user-component? [x]
+  (and (vector? x)
+       (fn? (first x))))
+
+(def primitive-component? map?)
 
 (defn reduce-children [f ctx children]
   (let [[recons ctx'] (reduce (fn [[recons ctx] c]
@@ -172,22 +176,79 @@
                                  :noria/element element
                                  :noria/node (:noria/node subst-component))]))))
 
+(defn apply? [x]
+  (and (vector? x)
+       (= 'apply (first x))))
+
+(defn reconcile-apply [component-id [_ lambda & new-args :as element] r-f ctx]
+  (let [[{:noria/keys [args subst component-id] :as component} ctx'] (lookup component-id ctx)
+        [args-reconciled ctx''] (reduce-children (fn [[old-arg new-arg] ctx]
+                                                   (reconcile old-arg new-arg r-f ctx))
+                                                 ctx'
+                                                 (map vector (concat args (repeat nil)) new-args))
+        [subst' ctx'''] (reconcile subst (apply lambda args-reconciled) r-f ctx'')]
+    [component-id (update-in ctx'''
+                             [:components component-id]
+                             assoc
+                             :noria/subst subst'
+                             :noria/args args-reconciled
+                             :noria/node (:noria/node ((:components ctx''') subst'))
+                             :noria/element element)]))
+
+(defn reconcile-vector [component-id element r-f ctx]
+  (throw (ex-info "not implemented yet" {:element element})))
+
 (defn reconcile [component-id element r-f ctx]
   (let [component ((:components ctx) component-id)
-        [component-id ctx] (if (and (some? component)
+        [component-id ctx] (if (and (or (user-component? element)
+                                        (primitive-component? element))
+                                    (some? component)
                                     (not= (get-type (:noria/element component))
                                           (get-type element)))
-                             [nil (destroy-recursively component-id r-f ctx)]
-                             [component-id ctx])]
-    (if (user-component? element)
-      (reconcile-user component-id element r-f ctx)
-      (reconcile-primitive component-id element r-f ctx))))
+                                [nil (destroy-recursively component-id r-f ctx)]
+                                [component-id ctx])]
+    (cond
+      (user-component? element) (reconcile-user component-id element r-f ctx)
+      (primitive-component? element) (reconcile-primitive component-id element r-f ctx)
+      (apply? element) (reconcile-apply component-id element r-f ctx)
+      (vector? element) (reconcile-vector component-id element r-f ctx)
+      :else (throw (ex-info "don't know how to reconcile " {:element element})))))
 
 (comment
+  
+
+  (let** [x [container 1]]
+    [some-component x])
+
+  ['apply (fn [x]
+            [some-component x])
+   [container 1]]
+
   (def my-label
     (noria.components/render (fn [x]
                                {:noria/type :text
                                 :noria/props {:text (str x)}})))
+
+  (def my-lambda
+    (noria.components/render
+     (fn [_]
+       ['apply (fn [x]
+                 {:noria/type :box
+                  :noria/props {:child x}})
+        [my-label 12]])))
+
+  (let [[c-id ctx] (reconcile nil [my-lambda :x] conj {:updates []
+                                                       :components {}
+                                                       :next-component-id 0
+                                                       :next-id 0})]
+    (def c-id c-id)
+    (def ctx ctx))
+
+  (reconcile c-id [my-lambda :x] conj (assoc ctx :updates []))
+
+  
+  
+  
 
   (def my-container
     (noria.components/render (fn [i]
