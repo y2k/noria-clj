@@ -16,7 +16,7 @@
     (vary-meta x assoc :noria/key k)
     (assoc :noria/key k)))
 
-(defn get-children [element]
+(defn set-keys [elements]
   (persistent!
    (second (reduce (fn [[indices res] e]
                      (if (some? e)
@@ -28,7 +28,7 @@
                            [indices' (conj! res (set-key e [type idx]))]))
                        [indices res]))
                    [{} (transient [])]
-                   (:noria/children element)))))
+                   elements))))
 
 (def user-component? vector?)
 
@@ -111,7 +111,7 @@
   (let [[node ctx] (if (some? node)
                      [node ctx]
                      (make-node new-element r-f ctx))
-        [children-reconciled ctx'] (reconcile-children node children (get-children new-element) r-f ctx)
+        [children-reconciled ctx'] (reconcile-children node children (set-keys (:children new-element)) r-f ctx)
         old-props (:noria/props element)
         new-props (:noria/props new-element)]
     [(assoc component
@@ -146,10 +146,9 @@
                 :noria/node (:noria/node subst')) ctx']))))
 
 (defn reconcile [component element r-f ctx]
-  (let [[component ctx] (if (not= (get-type (:noria/element component)) (get-type element))
-                          [nil (if (some? component)
-                                 (destroy-recursively component r-f ctx)
-                                 ctx)]
+  (let [[component ctx] (if (and (some? component)
+                                 (not= (get-type (:noria/element component)) (get-type element)))
+                          [nil (destroy-recursively component r-f ctx)]
                           [component ctx])]
     (if (user-component? element)
       (reconcile-user component element r-f ctx)
@@ -164,7 +163,7 @@
   (def my-container
     (noria.components/render (fn [_]
                                {:noria/type :div
-                                :noria/children [^{:noria/key "xy"} [my-label 10]
+                                :children [^{:noria/key "xy"} [my-label 10]
                                                  ^{:noria/key "xyzw"} [my-label 12]]
                                 :noria/props {:orientation :vertical}})))
 
