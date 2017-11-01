@@ -1,15 +1,17 @@
 (ns noria.tests
-  (:use noria clojure.test noria.components))
+  (:require [noria :refer :all]
+            [clojure.test :refer :all]
+            [noria.components :refer :all]))
 
 (defattr :dom/children :nodes-seq)
 (defattr :dom/child :node)
 
 (defn check-updates [elements]
-  (last (reduce (fn [[c-id ctx ups] [el updates]]
-                  (let [[c-id' ctx'] (reconcile c-id el conj ctx)]
-                    (is (= updates (:updates ctx')) "wrong updates")
-                    [c-id' (assoc ctx' :updates []) (:updates ctx')]))
-                [nil context-0 []] elements)))
+  (reduce (fn [[c-id ctx ups] [el updates]]
+            (let [[c-id' ctx'] (reconcile c-id el conj ctx)]
+              (is (= updates (:updates ctx')) "wrong updates")
+              [c-id' (assoc ctx' :updates []) (:updates ctx')]))
+          [nil context-0 []] elements))
 
 (t/deftest reconcile-seq
   (check-updates
@@ -46,14 +48,14 @@
                      {:noria/type :div
                       :noria/key :fu
                       :dom/text "fu"}]}
-     [#:noria{:update-type :destroy, :node 1}
-      #:noria{:update-type :make-node, :node 3, :type :div, :constructor-parameters {}}
+     [#:noria{:update-type :make-node, :node 3, :type :div, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 3, :value "hiy"}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy!!"}
       #:noria{:update-type :make-node, :node 4, :type :div, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 4, :value "fu"}
       #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 0}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}]]]))
+      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}
+      #:noria{:update-type :destroy, :node 1}]]]))
 
 (def label
   (render
@@ -79,7 +81,8 @@
                     #:noria{:update-type :add, :attr :dom/children, :node 1, :value 0, :index 0}]]
                   [[lambda "hello"] []]
                   [[lambda "bye"]
-                   [#:noria{:update-type :set-attr, :attr :noria/text, :node 0, :value "bye"}]]]))
+                   [#:noria{:update-type :set-attr, :attr :noria/text, :node 0, :value "bye"}]]]) 
+  )
 
 (def simple-container
   (render
