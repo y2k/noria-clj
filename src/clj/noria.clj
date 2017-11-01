@@ -48,9 +48,7 @@
 (declare reconcile)
 
 (defn destroy-recursively [component-id r-f ctx]
-  (let [get-children (fn [c-id] (let [c ((:components ctx) c-id)]
-                                 (or (::children c)
-                                     (some-> (::subst c) (vector)))))
+  (let [get-children #(::children ((:components ctx) %))
         components-to-destroy (reverse (tree-seq get-children get-children component-id))]
     (-> ctx
         (update :updates
@@ -63,11 +61,9 @@
                                      component-id))
                               (map (comp ::node (:components ctx)))
                               (dedupe)
-                              (mapcat (fn [node]
-                                        [{::update-type :remove
-                                          ::node node}
-                                         {::update-type :destroy
-                                          ::node node}])))
+                              (map (fn [node]
+                                        {::update-type :destroy
+                                         ::node node})))
                              r-f
                              updates
                              components-to-destroy)))
@@ -100,7 +96,7 @@
                      ctx'
                      new-elements)))
 
-(defn reconcile-order [parent-node old-nodes new-nodes r-f ctx]
+(defn reconcile-order [parent-node attr old-nodes new-nodes r-f ctx]
   (let [old-nodes (int-array old-nodes)
         new-nodes (int-array new-nodes)
         moved? (if (java.util.Arrays/equals old-nodes new-nodes)
@@ -112,56 +108,93 @@
                 (-> ctx
                     (cond-> (contains? old-nodes-set node)
                       (update :updates r-f {::update-type :remove
-                                            ::node node}))
+                                            ::attr attr
+                                            ::node parent-node
+                                            ::value node}))
                     (update :updates r-f {::update-type :add
-                                          ::parent parent-node
-                                          ::child node
+                                          ::attr attr
+                                          ::node parent-node
+                                          ::value node
                                           ::index i}))
                 ctx))
             ctx
             (map vector (range) new-nodes))))
 
-(defn reconcile-sequence [parent-node component-ids new-elements r-f ctx]
-  (let [get-nodes (fn [ctx]
-                    #(::node ((:components ctx) %)))
+(defn reconcile-sequence [parent-node attr component-ids new-elements r-f ctx]
+  (let [new-elements (set-keys new-elements)
+        get-nodes (fn [ctx] #(::node ((:components ctx) %)))
         old-nodes (map (get-nodes ctx) component-ids)
         key->component-id (into {}
                                 (map (fn [c-id]
                                        [(get-key (::element ((:components ctx) c-id))) c-id]))
                                 component-ids)
         [new-component-ids ctx'] (reconcile-by-keys key->component-id new-elements r-f ctx)
-        ctx'' (reconcile-order parent-node old-nodes (map (get-nodes ctx') new-component-ids) r-f ctx')]
+        new-nodes (map (get-nodes ctx') new-component-ids)
+        ctx'' (reconcile-order parent-node attr old-nodes new-nodes r-f ctx')]
     [new-component-ids ctx'']))
 
+(defonce data-types (atom {}))
+
+(defn get-data-type [k]
+  (get @data-types k :simple-value))
+
+(defn defattr [attr data-type]
+  (swap! data-types assoc attr data-type))
+
+(defonce constructor-parameters (atom {}))
+
+(defn get-constructor-parameters [k] (get @constructor-parameters k []))
+
+(defn defconstructor [node-type attrs]
+  (swap! constructor-parameters assoc node-type attrs))
+
 (defn make-node [element r-f {:keys [next-id] :as ctx}]
-  [next-id (-> ctx
-               (update :next-id inc)
-               (update :updates r-f {::update-type :make-node
-                                     ::node next-id
-                                     ::type (get-type element)
-                                     ::props (::props element)}))])
+  (let [constructor-parameters (get-constructor-parameters (get-type element))]
+    [next-id (-> ctx
+                 (update :next-id inc)
+                 (update :updates r-f
+                         {::update-type :make-node
+                          ::node next-id
+                          ::type (get-type element)
+                          ::constructor-parameters (select-keys element constructor-parameters)}))]))
+
+(defn set-attr [r-f ctx node attr value]
+  (update ctx :updates conj {::update-type :set-attr
+                             ::attr attr
+                             ::node node
+                             ::value value}))
+
+(defmulti reconcile-data-type (fn [data-type node attr old-value new-value r-f ctx] data-type))
+
+(defmethod reconcile-data-type :simple-value [_ node attr old-value new-value r-f ctx]
+  [new-value (if (not= old-value new-value)
+               (set-attr r-f ctx node attr new-value)
+               ctx)])
+
+(defmethod reconcile-data-type :nodes-seq [_ node attr old-value new-value r-f ctx]
+  (reconcile-sequence node attr old-value new-value r-f ctx))
+
+(defmethod reconcile-data-type :node [_ node attr old-value new-value r-f ctx]
+  (let [value-node (::node ((:components ctx) new-value))]
+    [value-node (if (not= value-node old-value)
+                  (set-attr r-f ctx node attr value-node)
+                  ctx)]))
 
 (defn reconcile-primitive [component-id new-element r-f ctx]
-  (let [[{::keys [node element children component-id] :as component} ctx] (lookup component-id ctx)
+  (let [[{::keys [node element component-id] :as component} ctx] (lookup component-id ctx)
         [node ctx] (if (some? node)
                      [node ctx]
                      (make-node new-element r-f ctx))
-        [children-reconciled ctx'] (reconcile-sequence node children (set-keys (:children new-element)) r-f ctx)
-        old-props (::props element)
-        new-props (::props new-element)]
-    [component-id
-     (-> ctx'
-         (update-in [:components component-id]
-                    assoc
-                    ::node node
-                    ::element new-element
-                    ::children children-reconciled)
-         (cond-> 
-           (and (::node component) (not= old-props new-props))
-           (update :updates r-f {::update-type :update-props
-                                 ::node node
-                                 ::new-props new-props
-                                 ::old-props old-props})))]))
+        [component' ctx'] (reduce (fn [[component ctx] [attr v]]
+                                    (let [data-type (get-data-type attr)
+                                          [value-reconciled ctx'] (reconcile-data-type data-type node attr (component attr) v r-f ctx)]
+                                      [(assoc component attr value-reconciled) ctx']))
+                                  [component ctx] (dissoc new-element ::type ::key))]
+    [component-id (assoc-in ctx'
+                            [:components component-id]
+                            (assoc component'
+                                   ::node node
+                                   ::element new-element))]))
 
 (defn reconcile-user [component-id [xf & args :as element] r-f ctx]
   (let [[{::keys [subst render state component-id] :as component} ctx'] (lookup component-id ctx)
@@ -208,7 +241,11 @@
                              ::node (::node ((:components ctx''') subst'))
                              ::element element)]))
 
-(defn reconcile-vector [component-id elements r-f ctx]
+(defn do? [x]
+  (and (vector? x)
+       (= 'do (first x))))
+
+(defn reconcile-do [component-id [_ & elements] r-f ctx]
   (let [[{::keys [node element children component-id] :as component} ctx] (lookup component-id ctx)
         key->component-id (into {}
                                 (map (fn [c-id]
@@ -241,86 +278,11 @@
       (user-component? element) (reconcile-user component-id element r-f ctx)
       (primitive-component? element) (reconcile-primitive component-id element r-f ctx)
       (apply? element) (reconcile-apply component-id element r-f ctx)
-      (vector? element) (reconcile-vector component-id element r-f ctx)
+      (do? element) (reconcile-do component-id element r-f ctx)
       :else (throw (ex-info "don't know how to reconcile " {:element element})))))
 
-(comment
-  
-
-  (let** [a [my-label "foo"]
-          b [my-component a]]
-    [{::type :set-property
-      :object a
-      :property :b
-      :value b}
-     b])
-  
-
-  [[my-label 1]
-   [my-label 2]] => 
-
-  (def my-label
-    (noria.components/render (fn [x]
-                               {::type :text
-                                ::props {:text (str x)}})))
-
-  (def my-lambda
-    (noria.components/render
-     (fn [y]
-       ['apply (fn [x]
-                 {::type :div
-                  :children [x]})
-        [my-label y]])))
-
-  (def my-container
-    (noria.components/render
-     (fn [i]
-       {::type :div
-        :children (map (fn [i]
-                         ^{::key i} [my-label i]) (range i))})))
-
-  (def my-composite
-    (noria.components/render
-     (fn [i]
-       (mapv (fn [i] [my-label i]) (range i)))))
-
-  
-
-  (let [[c-id ctx] (reconcile nil [my-lambda :x] conj {:updates []
-                                                       :components {}
-                                                       :next-component-id 0
-                                                       :next-id 0})]
-    (def c-id c-id)
-    (def ctx ctx))
-
-  (let [[c-id ctx] (reconcile nil [my-composite 2] conj {:updates []
-                                                         :components {}
-                                                         :next-component-id 0
-                                                         :next-id 0})]
-    (def c-id c-id)
-    (def ctx ctx))
-
-  (reconcile c-id [my-composite 3] conj (assoc ctx :updates []))
-
-  (let [[c-id ctx] (reconcile nil [my-container 2] conj {:updates []
-                                                         :components {}
-                                                         :next-component-id 0
-                                                         :next-id 0})]
-    (def c-id c-id)
-    (def ctx ctx))
-  
-  (reconcile c-id [my-container 1] conj (assoc ctx :updates []))
-
-  (reconcile c-id [my-lambda :y] conj (assoc ctx :updates []))
-
-  (defn bench [i j]
-    (LCS/lcs i j))
-  
-  (let [i (int-array (range 100))
-        j (int-array (range 100))]
-    (time
-     (do
-       (bench i j)
-       nil)))
-
-  )
+(def context-0
+  {:updates []
+   :components {}
+   :next-component-id 0
+   :next-id 0})
