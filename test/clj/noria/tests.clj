@@ -13,7 +13,7 @@
               [c-id' (assoc ctx' :updates []) (:updates ctx')]))
           [nil context-0 []] elements))
 
-(t/deftest reconcile-seq
+(deftest reconcile-seq
   (check-updates
    [[{:noria/type :div
       :dom/children
