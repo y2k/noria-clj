@@ -169,7 +169,7 @@
   (let [[{::keys [subst render state component-id] :as component} ctx'] (lookup component-id ctx)
         render (or render
                    (xf (fn
-                         ([] {})
+                         ([] {::component-id component-id})
                          ([state element] (assoc state ::element element))
                          ([state] state))))
         state (or state (render))
