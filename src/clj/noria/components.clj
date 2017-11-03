@@ -73,7 +73,7 @@
        ([state args]
         (let [key (apply key-fn args)
               state* (get-in state [::special-states key])
-              state*' (r-f state* args)]
+              state*' (r-f (assoc state* :noria/component-id (:noria/component-id state)) args)]
           (-> state
               (merge state*')
               (cond->

@@ -127,7 +127,7 @@
                           ::constructor-parameters (select-keys element constructor-parameters)}))]))
 
 (defn set-attr [r-f ctx node attr value]
-  (update ctx :updates conj {::update-type :set-attr
+  (update ctx :updates r-f {::update-type :set-attr
                              ::attr attr
                              ::node node
                              ::value value}))
@@ -253,8 +253,10 @@
                                           (update ::heap conj component-id)
                                           (assoc-in [:components component-id ::heap] (::heap ctx'))))]))
 
-(defn reconcile [component-id element r-f ctx]
-  (let [[component-id' ctx'] (reconcile* component-id element r-f (assoc ctx ::heap #{}))
+(defn reconcile [component-id element ctx]
+  (let [[component-id' ctx'] (reconcile* component-id element conj! (assoc ctx
+                                                                           ::heap #{}
+                                                                           :updates (transient [])))
         stale-components (clojure.set/difference (get-in ctx [:components component-id ::heap])
                                                  (get-in ctx' [:components component-id ::heap]))
         nodes-to-destroy (into #{} (map (fn [c-id] (get-in ctx' [:components c-id ::node]))) stale-components)]
@@ -263,10 +265,28 @@
                        (update :updates (fn [updates]
                                           (transduce (map (fn [node] {::update-type :destroy
                                                                      ::node node}))
-                                                     r-f updates nodes-to-destroy))))]))
+                                                     conj! updates nodes-to-destroy)))
+                       (update :updates persistent!))]))
+
+(defn force-update [ctx state]
+  (let [component-id (::component-id state)
+        elt (get-in ctx [:components component-id ::element])
+        ctx' (assoc-in ctx [:components component-id ::state] state)
+        [component-id' ctx''] (reconcile component-id elt ctx')]
+    (assert (= component-id component-id'))
+    ctx''))
 
 (def context-0
   {:updates []
    :components {}
    :next-component-id 0
    :next-id 0})
+
+
+(defn destroy! [ctx]
+  (doall (->> (vals (:components ctx))
+              (filter (comp user-component? ::element))
+              (map (fn [c]
+                     ((::render c) (::state c))))))
+  nil)
+

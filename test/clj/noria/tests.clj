@@ -8,7 +8,7 @@
 
 (defn check-updates [elements]
   (reduce (fn [[c-id ctx ups] [el updates]]
-            (let [[c-id' ctx'] (reconcile c-id el conj ctx)]
+            (let [[c-id' ctx'] (reconcile c-id el ctx)]
               (is (= updates (:updates ctx')) "wrong updates")
               [c-id' (assoc ctx' :updates []) (:updates ctx')]))
           [nil context-0 []] elements))
