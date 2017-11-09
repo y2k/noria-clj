@@ -238,21 +238,33 @@
                             :node 0,
                             :value 1}]]]))
 
+(deftest force-update-test
+  (let [div (fn [r-f]
+              (fn
+                ([] (assoc (r-f) :counter 1))
+                ([r [id & children]]
+                 (r-f (update r :counter inc) {:noria/type :div
+                                               :counter (:counter r)
+                                               :test-id id
+                                               :dom/children children}))
+                ([r] (r-f r))))
+        elt [div "container"
+             [div "sibling1"]
+             [div "will-update"
+              [div "some-child"]]
+             [div "sibling2"]
+             ]
+        [c-id ctx] (reconcile nil elt context-0)
+        will-update-div-id (->> (:components ctx)
+                                (filter (fn [[k v]] (= (:test-id v) "will-update")))
+                                (ffirst))
+        will-update-comp-id (->> (:components ctx)
+                                 (filter (fn [[k v]] (= (:noria/subst v) will-update-div-id)))
+                                 (ffirst))
+        state (get-in ctx [:components will-update-comp-id :noria/state])
+        ctx' (force-update ctx (assoc state :counter 42))]
+    (is (= (:updates ctx')
+           [#:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}
+            #:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}]))))
 
 (run-tests)
-
-(comment
-
-  (defconstructor :NSView #{:NSView/frame})
-
-  {:noria/type :NSView
-   :NSView/frame {:CGFrame/origin {:CGPoint/x 10
-                                   :CGPoint/y 10}
-                  :CGFrame/size {:CGSize/width 100
-                                 :CGSize/height 100}}
-   :NSView/subviews []}
-
-  
-
-  )
-
