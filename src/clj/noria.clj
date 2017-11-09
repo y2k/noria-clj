@@ -1,6 +1,9 @@
 (ns noria
   (:import [noria LCS]))
 
+(defmacro get-in* [m ks]
+  (reduce (fn [r k] `(get ~r ~k)) m ks))
+
 (defn get-key [x]
   (if (vector? x)
     (::key (meta x))
@@ -42,7 +45,7 @@
 (declare reconcile*)
 
 (defn lookup [component-id ctx]
-  (if-let [component (get-in ctx [:components component-id])]
+  (if-let [component (get-in* ctx [:components component-id])]
     [component ctx]
     (let [new-component-id (:next-component-id ctx)
           new-component {::component-id new-component-id}]
@@ -85,10 +88,10 @@
 
 (defn get-component-key [ctx]
   (fn [c-id]
-    [(get-key (get-in ctx [:components c-id ::element])) c-id]))
+    [(get-key (get-in* ctx [:components c-id ::element])) c-id]))
 
 (defn reconcile-sequence [parent-node attr component-ids new-elements r-f ctx]
-  (let [get-nodes (fn [ctx] #(get-in ctx [:components % ::node]))
+  (let [get-nodes (fn [ctx] #(get-in* ctx [:components % ::node]))
         old-nodes (map (get-nodes ctx) component-ids)
         new-elements (assign-keys new-elements)
         key->component-id (into {} (map (get-component-key ctx)) component-ids)
@@ -100,7 +103,7 @@
 (defonce schema (atom {}))
 
 (defn get-data-type [k]
-  (or (get-in @schema [k ::data-type]) :simple-value))
+  (or (get-in* @schema [k ::data-type]) :simple-value))
 
 (defn defattr [attr data]
   (swap! schema assoc attr data))
@@ -129,56 +132,59 @@
                             ::value value}))
 
 (defn component-node [ctx component-id]
-  (get-in ctx [:components component-id ::node]))
+  (get-in* ctx [:components component-id ::node]))
 
 (defn reconcile-attrs [{::keys [node] :as component} new-element r-f ctx]
-  (reduce
-   (fn [[component ctx] [attr new-value]]
-     (let [old-value (get component attr)
-           [value-reconciled ctx']
-           (case (get-data-type attr)
-             :simple-value [new-value (if (not= old-value new-value)
-                                        (set-attr r-f ctx node attr new-value)
-                                        ctx)]
-             :nodes-seq (reconcile-sequence node attr old-value new-value r-f ctx)
-             :node (let [old-node (component-node ctx old-value)
-                         [reconciled ctx'] (reconcile* old-value new-value r-f ctx)
-                         value-node (component-node ctx' reconciled)]
-                     [reconciled (if (not= value-node old-node)
-                                   (set-attr r-f ctx' node attr value-node)
-                                   ctx')]))]
-       [(assoc component attr value-reconciled) ctx']))
-   [component ctx]
-   new-element))
+  (let [[component ctx']
+        (reduce
+         (fn [[component ctx] [attr new-value]]
+           (let [old-value (get component attr)
+                 [value-reconciled ctx']
+                 (case (get-data-type attr)
+                   :simple-value [new-value (if (not= old-value new-value)
+                                              (set-attr r-f ctx node attr new-value)
+                                              ctx)]
+                   :nodes-seq (reconcile-sequence node attr old-value new-value r-f ctx)
+                   :node (let [old-node (component-node ctx old-value)
+                               [reconciled ctx'] (reconcile* old-value new-value r-f ctx)
+                               value-node (component-node ctx' reconciled)]
+                           [reconciled (if (not= value-node old-node)
+                                         (set-attr r-f ctx' node attr value-node)
+                                         ctx')]))]
+             [(assoc! component attr value-reconciled) ctx']))
+         [(transient component) ctx]
+         new-element)]
+    [(persistent! component) ctx']))
 
 (defn reconcile-constructor-parameters [new-element r-f ctx]
   (let [constructor-parameter? (get-constructor-parameters (::type new-element))
         [constructor-data component ctx']
-        (->> new-element
-             (filter (fn [[attr value]] (constructor-parameter? attr)))
-             (reduce
-              (fn [[constructor-data component ctx] [attr new-value]]
-                (let [[constructor-value value-reconciled ctx']
-                      (case (get-data-type attr)
-                        :simple-value [new-value new-value ctx]
-                        :node (let [[reconciled ctx'] (reconcile* nil new-value r-f ctx)]
-                                [(component-node ctx' reconciled) reconciled ctx'])
-                        :nodes-seq (let [[t-items ctx']
-                                         (reduce (fn [[items-reconciled ctx] item]
-                                                   (let [[item-reconciled ctx'] (reconcile* nil item r-f ctx)]
-                                                     [(conj! items-reconciled item-reconciled) ctx']))
-                                                 [(transient []) ctx]
-                                                 new-value)
-                                         items (persistent! t-items)]
-                                     [(mapv #(component-node ctx' %) items) items ctx']))]
-                  [(assoc! constructor-data attr constructor-value)
-                   (assoc! component attr value-reconciled)
-                   ctx']))
-              [(transient {}) (transient {}) ctx]))]
+        (reduce
+         (fn [[constructor-data component ctx :as res] [attr new-value]]
+           (if (constructor-parameter? attr)
+             (let [[constructor-value value-reconciled ctx']
+                   (case (get-data-type attr)
+                     :simple-value [new-value new-value ctx]
+                     :node (let [[reconciled ctx'] (reconcile* nil new-value r-f ctx)]
+                             [(component-node ctx' reconciled) reconciled ctx'])
+                     :nodes-seq (let [[t-items ctx']
+                                      (reduce (fn [[items-reconciled ctx] item]
+                                                (let [[item-reconciled ctx'] (reconcile* nil item r-f ctx)]
+                                                  [(conj! items-reconciled item-reconciled) ctx']))
+                                              [(transient []) ctx]
+                                              new-value)
+                                      items (persistent! t-items)]
+                                  [(mapv #(component-node ctx' %) items) items ctx']))]
+               [(assoc! constructor-data attr constructor-value)
+                (assoc! component attr value-reconciled)
+                ctx'])
+             res))
+         [(transient {}) (transient {}) ctx]
+         new-element)]
     [(persistent! constructor-data) (persistent! component) ctx']))
 
 (defn reconcile-primitive [component-id new-element r-f ctx]
-  (if-let [component (get-in ctx [:components component-id])]
+  (if-let [component (get-in* ctx [:components component-id])]
     (let [[component' ctx'] (reconcile-attrs component (dissoc new-element ::type ::key) r-f ctx)]
       [component-id (assoc-in ctx' [:components component-id] (assoc component' ::element new-element))])
     (let [component-id (:next-component-id ctx)
@@ -202,15 +208,15 @@
                          ([state] state))))
         state (or state (render))
         state' (render state args)]
-    (if (and (get-in ctx [:components component-id]) (::skip-subtree? state'))
+    (if (and (get-in* ctx [:components component-id]) (::skip-subtree? state'))
       [component-id (-> ctx'
-                        (update ::heap clojure.set/union (get-in ctx [:components component-id ::heap]))
+                        (update ::heap clojure.set/union (get-in* ctx [:components component-id ::heap]))
                         (update-in [:components component-id]
                                    assoc
                                    ::state state'
                                    ::element element))]
       (let [[subst' ctx''] (reconcile* subst (::element state') r-f ctx')
-            subst-component (get-in ctx'' [:components subst'])]
+            subst-component (get-in* ctx'' [:components subst'])]
         [component-id (update-in ctx''
                                  [:components component-id]
                                  assoc
@@ -235,7 +241,7 @@
                              assoc
                              ::subst subst'
                              ::args args-reconciled
-                             ::node (get-in ctx''' [:components subst' ::node])
+                             ::node (get-in* ctx''' [:components subst' ::node])
                              ::element element)]))
 
 (defn do? [x]
@@ -246,7 +252,7 @@
   (let [[{::keys [node children component-id] :as component} ctx] (lookup component-id ctx)
         key->component-id (into {}
                                 (map (fn [c-id]
-                                       [(get-key (get-in ctx [:components c-id ::element])) c-id]))
+                                       [(get-key (get-in* ctx [:components c-id ::element])) c-id]))
                                 children)
         elements-with-keys (assign-keys elements)
         [new-children-ids ctx'] (reconcile-by-keys key->component-id elements-with-keys r-f ctx)]
@@ -254,7 +260,7 @@
                              [:components component-id]
                              assoc
                              ::children new-children-ids
-                             ::node (get-in ctx' [:components (last new-children-ids) ::node])
+                             ::node (get-in* ctx' [:components (last new-children-ids) ::node])
                              ::element (into (with-meta ['do] (meta new-element)) elements-with-keys))]))
 
 (def component-ref? nat-int?)
@@ -262,7 +268,7 @@
 (defn reconcile* [component-id element r-f ctx]
   (let [heap-before (::heap ctx)
         ctx (assoc ctx ::heap #{})
-        component (get-in ctx [:components component-id])
+        component (get-in* ctx [:components component-id])
         component-id (if (and (some? component)
                               (or (nil? element)
                                   (and (or (user-component? element)
@@ -290,9 +296,9 @@
                                                                            ::heap #{}
                                                                            :updates (transient [])))
         stale-components (clojure.set/difference
-                          (get-in ctx [:components component-id ::heap])
-                          (get-in ctx' [:components component-id ::heap]))
-        nodes-to-destroy (into #{} (map (fn [c-id] (get-in ctx' [:components c-id ::node]))) stale-components)]
+                          (get-in* ctx [:components component-id ::heap])
+                          (get-in* ctx' [:components component-id ::heap]))
+        nodes-to-destroy (into #{} (map (fn [c-id] (get-in* ctx' [:components c-id ::node]))) stale-components)]
     [component-id' (-> ctx'
                        (dissoc ::heap)
                        (update :updates (fn [updates]
@@ -303,7 +309,7 @@
 
 (defn force-update [ctx state]
   (let [component-id (::component-id state)
-        elt (get-in ctx [:components component-id ::element])
+        elt (get-in* ctx [:components component-id ::element])
         ctx' (assoc-in ctx [:components component-id ::state] state)
         [component-id' ctx''] (reconcile component-id elt ctx')]
     (assert (= component-id component-id'))
