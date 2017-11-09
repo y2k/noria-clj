@@ -241,7 +241,7 @@
   (and (vector? x)
        (= 'do (first x))))
 
-(defn reconcile-do [component-id [_ & elements] r-f ctx]
+(defn reconcile-do [component-id [_ & elements :as new-element] r-f ctx]
   (let [[{::keys [node element children component-id] :as component} ctx] (lookup component-id ctx)
         key->component-id (into {}
                                 (map (fn [c-id]
@@ -254,7 +254,7 @@
                              assoc
                              ::children new-children-ids
                              ::node (get-in ctx' [:components (last new-children-ids) ::node])
-                             ::element elements-with-keys)]))
+                             ::element (into (with-meta ['do] (meta new-element)) elements-with-keys))]))
 
 (def component-ref? nat-int?)
 
