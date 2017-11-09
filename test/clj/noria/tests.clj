@@ -267,4 +267,32 @@
            [#:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}
             #:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}]))))
 
+(def counter
+  (render
+   (fn [a]
+     (swap! a inc)
+     {:noria/type :NSTextField
+      :NSTextField/stringValue "hello"})))
+
+(def component-with-caching
+  (comp
+   (skip-subtree (constantly true))
+   (render (fn [a]
+             [counter a]))))
+
+(deftest skip-subtree-works
+  (let [a (atom 0)]
+    (check-updates [[[component-with-caching a]
+                     [#:noria{:update-type
+                              :make-node,
+                              :node 0,
+                              :type :NSTextField,
+                              :constructor-parameters {}}
+                      #:noria{:update-type :set-attr,
+                              :attr :NSTextField/stringValue,
+                              :node 0,
+                              :value "hello"}]]
+                    [[component-with-caching a] []]])
+    (is (= 1 @a))))
+
 (run-tests)

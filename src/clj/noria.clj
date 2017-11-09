@@ -204,7 +204,7 @@
         state' (render state args)]
     (if (and (get-in ctx [:components component-id]) (::skip-subtree? state'))
       [component-id (-> ctx'
-                        ;;(update ::heap clojure.set/union (get-in ctx [:components component-id ::heap]))
+                        (update ::heap clojure.set/union (get-in ctx [:components component-id ::heap]))
                         (update-in [:components component-id]
                                    assoc
                                    ::state state'
