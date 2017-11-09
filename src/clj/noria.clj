@@ -242,7 +242,7 @@
        (= 'do (first x))))
 
 (defn reconcile-do [component-id [_ & elements :as new-element] r-f ctx]
-  (let [[{::keys [node element children component-id] :as component} ctx] (lookup component-id ctx)
+  (let [[{::keys [node children component-id] :as component} ctx] (lookup component-id ctx)
         key->component-id (into {}
                                 (map (fn [c-id]
                                        [(get-key (get-in ctx [:components c-id ::element])) c-id]))
