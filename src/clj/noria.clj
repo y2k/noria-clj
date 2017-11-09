@@ -293,11 +293,16 @@
                           (get-in ctx [:components component-id ::heap])
                           (get-in ctx' [:components component-id ::heap]))
         nodes-to-destroy (into #{} (map (fn [c-id] (get-in ctx' [:components c-id ::node]))) stale-components)]
-    [component-id' (-> ctx'
+    (doall (->> stale-components
+                (map (fn [c-id] (-> ctx' (get :components) (get c-id))))
+                (filter (comp user-component? ::element))
+                (map (fn [{::keys [render state]}]
+                       (render state)))))
+    [component-id' (-> (update ctx' :components (fn [cs] (reduce dissoc cs stale-components)))
                        (dissoc ::heap)
                        (update :updates (fn [updates]
                                           (transduce (map (fn [node] {::update-type :destroy
-                                                                     ::node node}))
+                                                                      ::node node}))
                                                      conj! updates nodes-to-destroy)))
                        (update :updates persistent!))]))
 
