@@ -203,11 +203,12 @@
         state (or state (render))
         state' (render state args)]
     (if (and (get-in ctx [:components component-id]) (::skip-subtree? state'))
-      [component-id (update-in ctx'
-                               [:components component-id]
-                               assoc
-                               ::state state'
-                               ::element element)]
+      [component-id (-> ctx'
+                        ;;(update ::heap clojure.set/union (get-in ctx [:components component-id ::heap]))
+                        (update-in [:components component-id]
+                                   assoc
+                                   ::state state'
+                                   ::element element))]
       (let [[subst' ctx''] (reconcile* subst (::element state') r-f ctx')
             subst-component (get-in ctx'' [:components subst'])]
         [component-id (update-in ctx''
@@ -259,7 +260,9 @@
 (def component-ref? nat-int?)
 
 (defn reconcile* [component-id element r-f ctx]
-  (let [component (get-in ctx [:components component-id])
+  (let [heap-before (::heap ctx)
+        ctx (assoc ctx ::heap #{})
+        component (get-in ctx [:components component-id])
         component-id (if (and (some? component)
                               (or (nil? element)
                                   (and (or (user-component? element)
@@ -276,10 +279,11 @@
                               (apply? element) (reconcile-apply component-id element r-f ctx)
                               (do? element) (reconcile-do component-id element r-f ctx)
                               :else (throw (ex-info "don't know how to reconcile " {:element element})))]
-    [component-id (cond-> ctx'
-                    (some? component-id) (->
-                                          (update ::heap conj component-id)
-                                          (assoc-in [:components component-id ::heap] (::heap ctx'))))]))
+    [component-id (-> ctx'
+                      (update ::heap clojure.set/union heap-before)
+                      (cond-> (some? component-id) (->
+                                                    (update ::heap conj component-id)
+                                                    (assoc-in [:components component-id ::heap] (::heap ctx')))))]))
 
 (defn reconcile [component-id element ctx]
   (let [[component-id' ctx'] (reconcile* component-id element conj! (assoc ctx
