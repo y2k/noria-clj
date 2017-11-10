@@ -298,12 +298,17 @@
         stale-components (clojure.set/difference
                           (get-in* ctx [:components component-id ::heap])
                           (get-in* ctx' [:components component-id ::heap]))
-        nodes-to-destroy (into #{} (map (fn [c-id] (get-in* ctx' [:components c-id ::node]))) stale-components)]
-    [component-id' (-> ctx'
+        nodes-to-destroy (into #{} (map #(get-in* ctx' [:components % ::node])) stale-components)]
+    (doall (->> stale-components
+                (map #(get-in* ctx' [:components %]))
+                (filter (comp user-component? ::element))
+                (map (fn [{::keys [render state]}]
+                       (render state)))))
+    [component-id' (-> (update ctx' :components (fn [cs] (reduce dissoc cs stale-components)))
                        (dissoc ::heap)
                        (update :updates (fn [updates]
                                           (transduce (map (fn [node] {::update-type :destroy
-                                                                     ::node node}))
+                                                                      ::node node}))
                                                      conj! updates nodes-to-destroy)))
                        (update :updates persistent!))]))
 

@@ -295,4 +295,18 @@
                     [[component-with-caching a] []]])
     (is (= 1 @a))))
 
+(deftest call-destroy-on-stale-components
+  (let [destroyed (atom false)
+        tracks-destroy (comp
+                        (render (fn [] {:noria/type :text
+                                        :dom/text "hello"}))
+                        (unmount (fn [s] (reset! destroyed true))))
+        container (render (fn [& c] {:noria/type :div
+                                     :dom/children c}))
+        [c-id ctx] (reconcile nil [container
+                                   [tracks-destroy]] context-0)
+        [c-id ctx] (reconcile c-id [container] ctx)]
+    (is (= (:updates ctx) [#:noria{:update-type :destroy, :node 1}]))
+    (is (= @destroyed true))))
+
 (run-tests)
