@@ -298,7 +298,7 @@
         stale-components (clojure.set/difference
                           (get-in* ctx [:components component-id ::heap])
                           (get-in* ctx' [:components component-id ::heap]))
-        nodes-to-destroy (into #{} (map #(get-in* ctx' [:components % ::node])) stale-components)]
+        nodes-to-destroy (into #{} (keep #(get-in* ctx' [:components % ::node])) stale-components)]
     (doall (->> stale-components
                 (map #(get-in* ctx' [:components %]))
                 (filter (comp user-component? ::element))
