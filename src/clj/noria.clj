@@ -209,7 +209,7 @@
         state' (render state args)]
     (if (and (get-in* ctx [:components component-id]) (::skip-subtree? state'))
       [component-id (-> ctx'
-                        (update ::heap clojure.set/union (get-in* ctx [:components component-id ::heap]))
+                        (update ::heap conj subst)
                         (update-in [:components component-id]
                                    assoc
                                    ::state state'
@@ -265,51 +265,65 @@
 (def component-ref? nat-int?)
 
 (defn reconcile* [component-id element r-f ctx]
-  (let [heap-before (::heap ctx)
-        ctx (assoc ctx ::heap #{})
-        component (get-in* ctx [:components component-id])
-        component-id (if (and (some? component)
-                              (or (nil? element)
-                                  (and (or (user-component? element)
-                                           (primitive-component? element))
-                                       (not= (get-type (::element component))
-                                             (get-type element)))))
-                       nil
-                       component-id)
-        [component-id ctx'] (cond
-                              (nil? element) [nil ctx]
-                              (component-ref? element) [element ctx]
-                              (user-component? element) (reconcile-user component-id element r-f ctx)
-                              (primitive-component? element) (reconcile-primitive component-id element r-f ctx)
-                              (apply? element) (reconcile-apply component-id element r-f ctx)
-                              (do? element) (reconcile-do component-id element r-f ctx)
-                              :else (throw (ex-info "don't know how to reconcile " {:element element})))]
-    [component-id (-> ctx'
-                      (update ::heap clojure.set/union heap-before)
-                      (cond-> (some? component-id) (->
-                                                    (update ::heap conj component-id)
-                                                    (assoc-in [:components component-id ::heap] (::heap ctx')))))]))
+  (if (component-ref? element)
+    [element ctx]
+    (let [heap-before (::heap ctx)
+          ctx (assoc ctx ::heap #{})
+          component (get-in* ctx [:components component-id])
+          component-id (if (and (some? component)
+                                (or (nil? element)
+                                    (and (or (user-component? element)
+                                             (primitive-component? element))
+                                         (not= (get-type (::element component))
+                                               (get-type element)))))
+                         nil
+                         component-id)
+          [component-id ctx'] (cond
+                                (nil? element) [nil ctx]
+                                (user-component? element) (reconcile-user component-id element r-f ctx)
+                                (primitive-component? element) (reconcile-primitive component-id element r-f ctx)
+                                (apply? element) (reconcile-apply component-id element r-f ctx)
+                                (do? element) (reconcile-do component-id element r-f ctx)
+                                :else (throw (ex-info "don't know how to reconcile " {:element element})))
+          victims (clojure.set/difference (::heap component)
+                                          (::heap ctx'))]
+      [component-id (-> ctx'
+                        (assoc ::heap (conj heap-before component-id))
+                        (update ::victims into victims)
+                        (assoc-in [:components component-id ::heap] (::heap ctx')))])))
 
-(defn reconcile [component-id element ctx]
-  (let [[component-id' ctx'] (reconcile* component-id element conj! (assoc ctx
-                                                                           ::heap #{}
-                                                                           :updates (transient [])))
-        stale-components (clojure.set/difference
-                          (get-in* ctx [:components component-id ::heap])
-                          (get-in* ctx' [:components component-id ::heap]))
-        nodes-to-destroy (into #{} (keep #(get-in* ctx' [:components % ::node])) stale-components)]
-    (doall (->> stale-components
-                (map #(get-in* ctx' [:components %]))
+(defn gc [{:keys [components root]
+           ::keys [victims] :as ctx}]
+  (let [victims (into #{}
+                      (mapcat (fn [c-id] (tree-seq (constantly true)
+                                                  (comp ::heap components)
+                                                  c-id)))
+                      victims)
+        nodes-to-destroy (into #{} (keep #(get-in* components [% ::node])) victims)]
+    (doall (->> victims
+                (map components)
                 (filter (comp user-component? ::element))
                 (map (fn [{::keys [render state]}]
                        (render state)))))
-    [component-id' (-> (update ctx' :components (fn [cs] (reduce dissoc cs stale-components)))
-                       (dissoc ::heap)
-                       (update :updates (fn [updates]
-                                          (transduce (map (fn [node] {::update-type :destroy
-                                                                      ::node node}))
-                                                     conj! updates nodes-to-destroy)))
-                       (update :updates persistent!))]))
+    (-> ctx
+        (update :components (fn [components]
+                              (reduce dissoc components victims)))
+        (update :updates (fn [updates]
+                           (transduce (map (fn [node] {::update-type :destroy
+                                                      ::node node}))
+                                      conj! updates nodes-to-destroy))))))
+
+(defn reconcile [component-id element {:keys [root] :as ctx}]
+  (let [[component-id' ctx'] (reconcile* component-id element conj! (assoc ctx
+                                                                           :updates (transient [])
+                                                                           ::victims #{}
+                                                                           ::heap #{}))]
+    [component-id'
+     (-> ctx'
+         (cond-> (not= component-id component-id') (update ::victims conj component-id))
+         (gc)
+         (update :updates persistent!)
+         (dissoc ::victims ::heap))]))
 
 (defn force-update [ctx state]
   (let [component-id (::component-id state)

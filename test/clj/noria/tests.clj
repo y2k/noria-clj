@@ -252,8 +252,7 @@
              [div "sibling1"]
              [div "will-update"
               [div "some-child"]]
-             [div "sibling2"]
-             ]
+             [div "sibling2"]]
         [c-id ctx] (reconcile nil elt context-0)
         will-update-div-id (->> (:components ctx)
                                 (filter (fn [[k v]] (= (:test-id v) "will-update")))
