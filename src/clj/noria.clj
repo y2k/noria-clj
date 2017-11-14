@@ -21,20 +21,19 @@
         :else x))
 
 (defn assign-keys [elements]
-  (persistent!
-   (second
-    (reduce
-     (fn [[indices res] e]
-       (if (some? e)
-         (if-let [key (get-key e)]
-           [indices (conj! res e)]
-           (let [type (get-type e)
-                 indices' (update indices type (fn [i] (if i (inc i) 0)))
-                 idx (indices' type)]
-             [indices' (conj! res (assign-key e [type idx]))]))
-         [indices res]))
-     [{} (transient [])]
-     elements))))
+  (let [xf (fn [r-f]
+             (let [indices (java.util.HashMap.)]
+               (fn
+                 ([] (r-f))
+                 ([s e]
+                  (if-let [key (get-key e)]
+                    (r-f s e)
+                    (let [type (get-type e)
+                          idx (or (.get indices type) 0)]
+                      (.put indices type (inc idx))
+                      (r-f s (assign-key e [type idx])))))
+                 ([s] (r-f s)))))]
+    (into [] (comp (filter some?) xf) elements)))
 
 (defn user-component? [x]
   (and (vector? x)
