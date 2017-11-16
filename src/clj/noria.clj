@@ -54,8 +54,7 @@
            (assoc-in [:components new-component-id] new-component))])))
 
 (defn reconcile-by-keys [key->component-id new-elements r-f ctx]
-  (let [new-keys (into #{} (map get-key) new-elements)
-        [reconciled ctx'] (reduce (fn [[sink ctx] e]
+  (let [[reconciled ctx'] (reduce (fn [[sink ctx] e]
                                     (let [[reconciled ctx'] (reconcile* (key->component-id (get-key e)) e r-f ctx)]
                                       [(conj! sink reconciled) ctx']))
                                   [(transient []) ctx]
@@ -288,9 +287,10 @@
           victims (clojure.set/difference (::heap component)
                                           (::heap ctx'))]
       [component-id (-> ctx'
-                        (assoc ::heap (conj heap-before component-id))
+                        (assoc ::heap (cond-> heap-before
+                                        (some? component-id) (conj component-id)))
                         (update ::victims into victims)
-                        (assoc-in [:components component-id ::heap] (::heap ctx')))])))
+                        (cond-> (some? component-id) (assoc-in [:components component-id ::heap] (::heap ctx'))))])))
 
 (defn gc [{:keys [components root]
            ::keys [victims] :as ctx}]

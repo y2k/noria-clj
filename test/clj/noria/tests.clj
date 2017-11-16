@@ -147,6 +147,16 @@
                     #:noria{:update-type :destroy, :node 2}]]])
   )
 
+(deftest simple-do
+  (check-updates [[['do
+                    {:noria/type :a}
+                    {:noria/type :b}]
+                   [#:noria{:update-type :make-node, :node 0, :type :a, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 1, :type :b, :constructor-parameters {}}]]
+                  [['do
+                    {:noria/type :a}
+                    {:noria/type :b}] []]]))
+
 (noria/defattr :NSWindow/contentView {:noria/data-type :node})
 
 (def text-field
