@@ -18,53 +18,53 @@
   (check-updates
    [[{:noria/type :div
       :dom/children
-      [{:noria/type :div
+      [{:noria/type :hey
         :noria/key :hey
         :dom/text "hey"}
-       {:noria/type :div
+       {:noria/type :hoy
         :noria/key :hoy
         :dom/text "hoy"}]}
      [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
-      #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
+      #:noria{:update-type :make-node, :node 1, :type :hey, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 1, :value "hey"}
-      #:noria{:update-type :make-node, :node 2, :type :div, :constructor-parameters {}}
+      #:noria{:update-type :make-node, :node 2, :type :hoy, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy"}
       #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
       #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
     [{:noria/type :div
       :dom/children
-      [{:noria/type :div
+      [{:noria/type :hey
         :noria/key :hey
         :dom/text "hey"}
-       {:noria/type :div
+       {:noria/type :hoy
         :noria/key :hoy
         :dom/text "hoy"}]} []]
     [{:noria/type :div
-      :dom/children [{:noria/type :div
+      :dom/children [{:noria/type :hiy
                       :noria/key :hiy
                       :dom/text "hiy"}
-                     {:noria/type :div
+                     {:noria/type :hoy
                       :noria/key :hoy
                       :dom/text "hoy!!"}
-                     {:noria/type :div
+                     {:noria/type :fu
                       :noria/key :fu
                       :dom/text "fu"}]}
-     [#:noria{:update-type :make-node, :node 3, :type :div, :constructor-parameters {}}
+     [#:noria{:update-type :make-node, :node 3, :type :hiy, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 3, :value "hiy"}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy!!"}
-      #:noria{:update-type :make-node, :node 4, :type :div, :constructor-parameters {}}
+      #:noria{:update-type :make-node, :node 4, :type :fu, :constructor-parameters {}}
       #:noria{:update-type :set-attr, :attr :dom/text, :node 4, :value "fu"}
       #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 0}
       #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}
       #:noria{:update-type :destroy, :node 1}]]
     [{:noria/type :div
-      :dom/children [{:noria/type :div
+      :dom/children [{:noria/type :hoy
                       :noria/key :hoy
                       :dom/text "hoy!!"}
-                     {:noria/type :div
+                     {:noria/type :hiy
                       :noria/key :hiy
                       :dom/text "hiy"}
-                     {:noria/type :div
+                     {:noria/type :fu
                       :noria/key :fu
                       :dom/text "fu"}]}
      [#:noria{:update-type :remove, :attr :dom/children, :node 0, :value 2}
@@ -317,5 +317,62 @@
         [c-id ctx] (reconcile c-id [container] ctx)]
     (is (= (:updates ctx) [#:noria{:update-type :destroy, :node 1}]))
     (is (= @destroyed true))))
+
+(deftest reuse-with-same-type
+  (check-updates [[{:noria/type :div
+                    :dom/children [{:noria/type :div
+                                    :x 1
+                                    :noria/key 1}]}
+                   [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :set-attr, :attr :x, :node 1, :value 1}
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}]]
+                  [{:noria/type :div
+                    :dom/children [{:noria/type :div
+                                    :x 2
+                                    :noria/key 2}]}
+                   [#:noria{:update-type :set-attr, :attr :x, :node 1, :value 2}]]]))
+
+
+(deftest reuse-with-same-type-check-order
+  (check-updates [[{:noria/type :div
+                    :dom/children [{:noria/type :div
+                                    :x 1
+                                    :noria/key 1}
+                                   {:noria/type :div
+                                    :x 2
+                                    :noria/key 2}]}
+                   [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :set-attr, :attr :x, :node 1, :value 1}
+                    #:noria{:update-type :make-node, :node 2, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :set-attr, :attr :x, :node 2, :value 2}
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
+                  [{:noria/type :div
+                    :dom/children [{:noria/type :div
+                                    :x 3
+                                    :noria/key 3}
+                                   {:noria/type :div
+                                    :x 1
+                                    :noria/key 1}]}
+                   [#:noria{:update-type :set-attr, :attr :x, :node 2, :value 3}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 0, :value 2}
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 0}]]
+                  [{:noria/type :div
+                    :dom/children [{:noria/type :div
+                                    :x 1
+                                    :noria/key 1}
+                                   {:noria/type :div
+                                    :x 4
+                                    :noria/key 4}]}
+                   [#:noria{:update-type :set-attr, :attr :x, :node 2, :value 4}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 0, :value 1}
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}]]]))
+
+
+
+
+
 
 (run-tests)

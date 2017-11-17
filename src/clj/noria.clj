@@ -11,7 +11,9 @@
 
 (defn get-type [x]
   (if (vector? x)
-    (first x)
+    (let [f (first x)]
+      (when (and (not= f 'do) (not= f 'apply))
+        f))
     (::type x)))
 
 (defn assign-key [x k]
@@ -53,9 +55,29 @@
            (update :next-component-id inc)
            (assoc-in [:components new-component-id] new-component))])))
 
+(defn collect-reusable-components [key->component-id new-keys ctx]
+  (let [get-component-type (fn [c-id]
+                             (get-type (get-in* ctx [:components c-id ::element])))]
+    (reduce (fn [^java.util.HashMap hm [key c-id]]
+              (when (not (contains? new-keys key))
+                (when-let [c-type (get-component-type c-id)]
+                  (let [^java.util.ArrayDeque l (or (.get hm c-type)
+                                                    (let [l (java.util.ArrayDeque.)]
+                                                      (.put hm c-type l)
+                                                      l))]
+                    (.push l c-id))))
+              hm)
+            (java.util.HashMap.) key->component-id)))
+
 (defn reconcile-by-keys [key->component-id new-elements r-f ctx]
-  (let [[reconciled ctx'] (reduce (fn [[sink ctx] e]
-                                    (let [[reconciled ctx'] (reconcile* (key->component-id (get-key e)) e r-f ctx)]
+  (let [new-keys (into #{} (map get-key) new-elements)
+        ^java.util.HashMap to-reuse (collect-reusable-components key->component-id new-keys ctx)
+        [reconciled ctx'] (reduce (fn [[sink ctx] e]
+                                    (let [old-c-id (or (key->component-id (get-key e))
+                                                       (when-let [e-type (get-type e)]
+                                                         (when-let [^java.util.ArrayDeque tr (.get to-reuse e-type)]
+                                                           (.poll tr))))
+                                          [reconciled ctx'] (reconcile* old-c-id e r-f ctx)]
                                       [(conj! sink reconciled) ctx']))
                                   [(transient []) ctx]
                                   new-elements)]
@@ -65,36 +87,43 @@
   (if (= old-nodes new-nodes)
     ctx
     (let [moved? (complement (into #{} (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
-          ;old-nodes-indices (into {} (map-indexed (fn [i n] [n i])) old-nodes)
-          old-nodes-set (into #{} old-nodes)]
-      (reduce (fn [ctx [i node]]
-                (if (moved? node)
-                  (-> ctx
-                      (cond-> (contains? old-nodes-set node)
-                        (update :updates r-f {::update-type :remove
-                                              ::attr attr
-                                              ::node parent-node
-                                              ::value node}))
-                      (update :updates r-f {::update-type :add
-                                            ::attr attr
-                                            ::node parent-node
-                                            ::value node
-                                            ::index i}))
-                  ctx))
-              ctx
-              (map vector (range) new-nodes)))))
+          old-nodes-set (into #{} old-nodes)
+          removes (into []
+                        (keep
+                         (fn [node]
+                           (when (and (moved? node) (contains? old-nodes-set node))
+                             {::update-type :remove
+                              ::attr attr
+                              ::node parent-node
+                              ::value node})))
+                        new-nodes)
+          adds (into []
+                     (comp
+                      (map-indexed
+                       (fn [i node]
+                         (when (moved? node)
+                           {::update-type :add
+                            ::attr attr
+                            ::node parent-node
+                            ::value node
+                            ::index i})))
+                      (filter some?))
+                     new-nodes)]
+      (update ctx :updates (fn [updates] (as-> updates <!>
+                                          (reduce r-f <!> removes)
+                                          (reduce r-f <!> adds)))))))
 
 (defn get-component-key [ctx]
   (fn [c-id]
     [(get-key (get-in* ctx [:components c-id ::element])) c-id]))
 
 (defn reconcile-sequence [parent-node attr component-ids new-elements r-f ctx]
-  (let [get-nodes (fn [ctx] #(get-in* ctx [:components % ::node]))
-        old-nodes (map (get-nodes ctx) component-ids)
+  (let [get-node (fn [ctx] #(get-in* ctx [:components % ::node]))
+        old-nodes (map (get-node ctx) component-ids)
         new-elements (assign-keys new-elements)
         key->component-id (into {} (map (get-component-key ctx)) component-ids)
         [new-component-ids ctx'] (reconcile-by-keys key->component-id new-elements r-f ctx)
-        new-nodes (map (get-nodes ctx') new-component-ids)
+        new-nodes (map (get-node ctx') new-component-ids)
         ctx'' (reconcile-order parent-node attr old-nodes new-nodes r-f ctx')]
     [new-component-ids ctx'']))
 
