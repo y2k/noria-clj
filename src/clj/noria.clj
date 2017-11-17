@@ -88,10 +88,6 @@
     ctx
     (let [moved? (complement (into #{} (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
           old-nodes-set (into #{} old-nodes)
-          new-nodes-set (into #{} new-nodes)
-          
-          to-remove (clojure.set/difference old-nodes-set new-nodes-set)
-          
           removes (into []
                         (keep
                          (fn [node]
@@ -100,7 +96,7 @@
                               ::attr attr
                               ::node parent-node
                               ::value node})))
-                        (into new-nodes to-remove))
+                        (into old-nodes-set new-nodes))
           adds (into []
                      (comp
                       (map-indexed
