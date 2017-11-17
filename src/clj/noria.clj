@@ -35,7 +35,7 @@
                       (.put indices type (inc idx))
                       (r-f s (assign-key e [type idx])))))
                  ([s] (r-f s)))))]
-    (into [] (comp (filter some?) xf) elements)))
+    (into (if (set? elements) #{} []) (comp (filter some?) xf) elements)))
 
 (defn user-component? [x]
   (and (vector? x)
@@ -88,6 +88,10 @@
     ctx
     (let [moved? (complement (into #{} (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
           old-nodes-set (into #{} old-nodes)
+          new-nodes-set (into #{} new-nodes)
+          
+          to-remove (clojure.set/difference old-nodes-set new-nodes-set)
+          
           removes (into []
                         (keep
                          (fn [node]
@@ -96,7 +100,7 @@
                               ::attr attr
                               ::node parent-node
                               ::value node})))
-                        new-nodes)
+                        (into new-nodes to-remove))
           adds (into []
                      (comp
                       (map-indexed
@@ -113,18 +117,53 @@
                                           (reduce r-f <!> removes)
                                           (reduce r-f <!> adds)))))))
 
+(defn reconcile-set [parent-node attr old-nodes new-nodes r-f ctx]
+  (if (= old-nodes new-nodes)
+    ctx
+    (let [to-add (clojure.set/difference new-nodes old-nodes)
+          to-remove (clojure.set/difference old-nodes new-nodes)
+          removes (into []
+                        (map
+                         (fn [node]
+                           {::update-type :remove
+                            ::attr attr
+                            ::node parent-node
+                            ::value node}))
+                        to-remove)
+          idx (count (clojure.set/intersection new-nodes old-nodes))
+          adds (into []
+                     (comp
+                      (map-indexed
+                       (fn [i node]
+                         {::update-type :add
+                          ::attr attr
+                          ::node parent-node
+                          ::value node
+                          ::index (+ idx i)})))
+                     to-add)]
+      (update ctx :updates (fn [updates] (as-> updates <!>
+                                          (reduce r-f <!> removes)
+                                          (reduce r-f <!> adds)))))))
+
 (defn get-component-key [ctx]
   (fn [c-id]
     [(get-key (get-in* ctx [:components c-id ::element])) c-id]))
 
 (defn reconcile-sequence [parent-node attr component-ids new-elements r-f ctx]
   (let [get-node (fn [ctx] #(get-in* ctx [:components % ::node]))
-        old-nodes (map (get-node ctx) component-ids)
         new-elements (assign-keys new-elements)
         key->component-id (into {} (map (get-component-key ctx)) component-ids)
         [new-component-ids ctx'] (reconcile-by-keys key->component-id new-elements r-f ctx)
-        new-nodes (map (get-node ctx') new-component-ids)
-        ctx'' (reconcile-order parent-node attr old-nodes new-nodes r-f ctx')]
+        unordered? (set? new-elements)
+        old-nodes (into (if unordered? #{} [])
+                        (map (get-node ctx))
+                        component-ids)
+        new-nodes (into (if unordered? #{} [])
+                        (map (get-node ctx'))
+                        new-component-ids)
+        ctx'' (if unordered?
+                (reconcile-set parent-node attr old-nodes new-nodes r-f ctx')
+                (reconcile-order parent-node attr old-nodes new-nodes r-f ctx'))]
     [new-component-ids ctx'']))
 
 (defonce schema (atom {}))
