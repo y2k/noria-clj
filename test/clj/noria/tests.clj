@@ -7,12 +7,11 @@
 (defattr :dom/child {:noria/data-type :node})
 
 (defn check-updates [elements]
-  (reduce (fn [[c-id ctx ups] [el updates]]
-            (let [[c-id' ctx'] (reconcile c-id el ctx)]
+  (reduce (fn [[old-value ctx] [el updates]]
+            (let [[new-value ctx'] (reconcile old-value el ctx)]
               (is (= updates (:updates ctx')) "wrong updates")
-              [c-id' (assoc ctx' :updates []) (:updates ctx')]))
-          [nil context-0 []] elements))
-
+              [new-value (dissoc ctx' :updates)]))
+          [nil context-0] elements))
 
 (deftest reconcile-seq
   (check-updates
@@ -128,8 +127,7 @@
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}]]
                   [[simple-container 2]
                    [#:noria{:update-type :remove :attr :dom/children :node 0 :value 4}
-                    #:noria{:update-type :destroy, :node 4}]]])
-  )
+                    #:noria{:update-type :destroy, :node 4}]]]))
 
 (def do-block
   (render
@@ -147,8 +145,7 @@
                   [[do-block 3] []]
                   [[do-block 1]
                    [#:noria{:update-type :destroy, :node 1}
-                    #:noria{:update-type :destroy, :node 2}]]])
-  )
+                    #:noria{:update-type :destroy, :node 2}]]]))
 
 (deftest simple-do
   (check-updates [[['do
@@ -208,7 +205,7 @@
                     #:noria{:update-type :make-node,
                             :node 2,
                             :type :fake/constraint
-                            :constructor-parameters #:constraint{:view1 2, :view2 3}}
+                            :constructor-parameters #:constraint{:view1 0, :view2 1}}
                     #:noria{:update-type :make-node,
                             :node 3,
                             :type :Container,
@@ -252,10 +249,13 @@
                             :value 1}]]]))
 
 (deftest force-update-test
-  (let [div (fn [r-f]
+  (let [will-update-path (atom nil)
+        div (fn [r-f]
               (fn
                 ([] (assoc (r-f) :counter 1))
                 ([r [id & children]]
+                 (when (= id "will-update")
+                   (reset! will-update-path (:noria/id-path r)))
                  (r-f (update r :counter inc) {:noria/type :div
                                                :counter (:counter r)
                                                :test-id id
@@ -266,15 +266,8 @@
              [div "will-update"
               [div "some-child"]]
              [div "sibling2"]]
-        [c-id ctx] (reconcile nil elt context-0)
-        will-update-div-id (->> (:components ctx)
-                                (filter (fn [[k v]] (= (:test-id v) "will-update")))
-                                (ffirst))
-        will-update-comp-id (->> (:components ctx)
-                                 (filter (fn [[k v]] (= (:noria/subst v) will-update-div-id)))
-                                 (ffirst))
-        state (get-in ctx [:components will-update-comp-id :noria/state])
-        ctx' (force-update ctx (assoc state :counter 42))]
+        [value ctx] (reconcile nil elt context-0)
+        [new-value ctx'] (noria/reconcile-in value @will-update-path #(assoc % :counter 42) ctx)]
     (is (= (:updates ctx')
            [#:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}
             #:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}]))))
@@ -391,7 +384,7 @@
                                     {:noria/type :hiy}}}
                    [#:noria{:update-type :make-node, :node 3, :type :hiy, :constructor-parameters {}}
                     #:noria{:update-type :remove :attr :dom/children :node 0 :value 1}
-                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 1}                  
+                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 1}
                     #:noria{:update-type :destroy, :node 1}]]
                   [{:noria/type :div
                     :dom/children #{{:noria/type :hoy
@@ -399,4 +392,62 @@
                                     {:noria/type :hiy}}}
                    [#:noria{:update-type :set-attr, :attr :hoy/x, :node 2, :value 1}]]]))
 
+(def type-comp
+  (render
+   (fn [type]
+     {:noria/type type})))
+
+(def lambda-comp
+  (render
+   (fn [type]
+     ['apply (fn [x]
+               {:noria/type :div
+                :dom/children [x]}) [type-comp type]])))
+
+(deftest reconcile-lambda-2
+  (check-updates [[[lambda-comp :foo]
+                   [#:noria{:update-type :make-node, :node 0, :type :foo, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :add, :attr :dom/children, :node 1, :value 0, :index 0}]]
+                  [[lambda-comp :bar]
+                   [#:noria{:update-type :make-node, :node 2, :type :bar, :constructor-parameters {}}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 1, :value 0}
+                    #:noria{:update-type :add, :attr :dom/children, :node 1, :value 2, :index 0}
+                    #:noria{:update-type :destroy, :node 0}]]]))
+
+(def double-lambda
+  (render
+   (fn [a b]
+     (prn "hey")
+     ['apply (fn [x]
+               (prn "hoy")
+               ['apply (fn [y]
+                         {:noria/type :div
+                          :dom/children [x y]}) [type-comp b]]) [type-comp a]])))
+
+(deftest nested-applies
+  (check-updates [[[double-lambda :foo :bar]
+                   [#:noria{:update-type :make-node, :node 0, :type :foo, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 1, :type :bar, :constructor-parameters {}}
+                    #:noria{:update-type :make-node, :node 2, :type :div, :constructor-parameters {}}
+                    #:noria{:update-type :add, :attr :dom/children, :node 2, :value 0, :index 0}
+                    #:noria{:update-type :add, :attr :dom/children, :node 2, :value 1, :index 1}]]
+                  [[double-lambda :foo :baz]
+                   [#:noria{:update-type :make-node, :node 3, :type :baz, :constructor-parameters {}}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 2, :value 1}
+                    #:noria{:update-type :add, :attr :dom/children, :node 2, :value 3, :index 1}
+                    #:noria{:update-type :destroy, :node 1}]]
+                  [[double-lambda :fizz :fuzz]
+                   [#:noria{:update-type :make-node, :node 4, :type :fizz, :constructor-parameters {}}                    
+                    #:noria{:update-type :make-node, :node 5, :type :fuzz, :constructor-parameters {}}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 2, :value 0}
+                    #:noria{:update-type :remove, :attr :dom/children, :node 2, :value 3}
+                    #:noria{:update-type :add, :attr :dom/children, :node 2, :value 4, :index 0}
+                    #:noria{:update-type :add, :attr :dom/children, :node 2, :value 5, :index 1}
+                    #:noria{:update-type :destroy, :node 3}
+                    #:noria{:update-type :destroy, :node 0}]]]))
+
+
+
 (run-tests)
+
