@@ -447,7 +447,32 @@
                     #:noria{:update-type :destroy, :node 3}
                     #:noria{:update-type :destroy, :node 0}]]]))
 
+(def type-from-state
+  (fn [r-f]
+    (fn
+      ([] (r-f))
+      ([state _] (r-f state {:noria/type (::type state :foo)}))
+      ([state] (r-f state)))))
 
+(deftest force-update-2
+  (let [[value ctx] (reconcile nil {:noria/type :div
+                                    :dom/children [[type-from-state]]} context-0)
+        [new-value ctx'] (reconcile-in value [0 1] #(assoc % ::type :bar) ctx)]
+    (is (= [#:noria{:update-type :make-node,
+                    :node 2,
+                    :type :bar,
+                    :constructor-parameters {}}
+            #:noria{:update-type :remove,
+                    :node 0,
+                    :attr :dom/children,
+                    :value 1}
+            #:noria{:update-type :add,
+                    :node 0,
+                    :index 0,
+                    :attr :dom/children,
+                    :value 2}
+            #:noria{:update-type :destroy, :node 1}]
+           (:updates ctx')))))
 
 (run-tests)
 
