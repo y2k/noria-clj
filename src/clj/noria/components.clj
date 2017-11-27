@@ -80,3 +80,8 @@
                   (not save?) (assoc ::special-states {}))
               (assoc-in [::special-states key] state*'))))
        ([state] (r-f state))))))
+
+(defn compare-args [pred]
+  (fn [{args :noria.components/args} args']
+    (and (not= args :noria.components/nil)
+         (pred args args'))))
