@@ -27,15 +27,16 @@
            (assoc ::args args)))
       ([state] (r-f state)))))
 
-(defn cache [pred]
-  (fn [r-f]
-    (fn
-      ([] (r-f))
-      ([state args]
-       (if (pred state args)
-         state
-         (r-f state args)))
-      ([state] (r-f state)))))
+(defn cache [& preds]
+  (let [pred (reduce (fn [s p] (fn [a b] (and (p a b) (s a b)))) (constantly true) preds)]
+    (fn [r-f]
+      (fn
+        ([] (r-f))
+        ([state args]
+         (if (pred state args)
+             state
+             (r-f state args)))
+        ([state] (r-f state))))))
 
 (defn pure-if [pred]
   (comp
