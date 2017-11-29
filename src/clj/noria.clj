@@ -192,13 +192,13 @@
                             (completing hs-conj!)
                             (java.util.HashSet.)
                             new-exprs')
-        old-values-by-keys (transduce (keep (fn [value]
-                                              (when-let [k (get-key (::expr value))]
-                                                [k value])))
-                                      (completing hm-assoc!)
-                                      (java.util.HashMap.)
-                                      old-values)
-        ^java.util.HashSet old-values-set (reduce hs-conj! (java.util.HashSet.) old-values)
+        ^java.util.HashMap old-values-by-keys (transduce (keep (fn [value]
+                                                                 (when-let [k (get-key (::expr value))]
+                                                                   [k value])))
+                                                         (completing hm-assoc!)
+                                                         (java.util.HashMap.)
+                                                         old-values)
+        
         ^java.util.HashMap to-reuse (reduce (fn [^java.util.HashMap hm [key old-value]]
                                               (when (not (contains? new-keys key))
                                                 (when-let [c-type (-> old-value ::expr get-type)]
@@ -210,6 +210,7 @@
                                               hm)
                                             (java.util.HashMap.)
                                             old-values-by-keys)
+        
         [new-values ctx'] (reduce (fn [[new-values ctx] expr]
                                     (let [old-value (or (get old-values-by-keys (get-key expr))
                                                         (when-let [e-type (get-type expr)]
@@ -217,15 +218,17 @@
                                                             (.poll tr))))
                                           [new-value ctx'] (reconcile* ppath old-value expr env ctx)]
                                       (when (some? old-value)
-                                        (.remove old-values-set old-value))
-                                      [(conj! new-values new-value) ctx']))
+                                        (.remove old-values-by-keys (get-key (::expr old-value))))
+                                      [(conj! new-values new-value) ctx' ]))
                                   [(transient []) ctx]
                                   new-exprs')]
-    [(persistent! new-values) (reduce destroy-value ctx' old-values-set)]))
+    [(persistent! new-values) (reduce (fn [ctx [_ val]]
+                                        (destroy-value ctx val))
+                                      ctx' old-values-by-keys)]))
 
 (defn reconcile-sequence [ppath parent-node attr old-values new-exprs env ctx]
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
-        unordered? (set? new-exprs)
+        unordered? (::unordered? (meta new-exprs))
         old-nodes (into (if unordered? #{} [])
                         (comp (map ::result)
                               (filter some?))

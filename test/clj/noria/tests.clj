@@ -368,28 +368,28 @@
 
 (deftest reconcile-unordered
   (check-updates [[{:noria/type :div
-                    :dom/children #{{:noria/type :hey}
-                                    {:noria/type :hoy}}}
+                    :dom/children ^:noria/unordered? [{:noria/type :hey}
+                                                      {:noria/type :hoy}]}
                    [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
                     #:noria{:update-type :make-node, :node 1, :type :hey, :constructor-parameters {}}
                     #:noria{:update-type :make-node, :node 2, :type :hoy, :constructor-parameters {}}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
                   [{:noria/type :div
-                    :dom/children #{{:noria/type :hey}
-                                    {:noria/type :hoy}}}
+                    :dom/children ^:noria/unordered?[{:noria/type :hey}
+                                                     {:noria/type :hoy}]}
                    []]
                   [{:noria/type :div
-                    :dom/children #{{:noria/type :hoy}
-                                    {:noria/type :hiy}}}
+                    :dom/children ^:noria/unordered?[{:noria/type :hoy}
+                                                     {:noria/type :hiy}]}
                    [#:noria{:update-type :make-node, :node 3, :type :hiy, :constructor-parameters {}}
                     #:noria{:update-type :remove :attr :dom/children :node 0 :value 1}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 1}
                     #:noria{:update-type :destroy, :node 1}]]
                   [{:noria/type :div
-                    :dom/children #{{:noria/type :hoy
-                                     :hoy/x 1}
-                                    {:noria/type :hiy}}}
+                    :dom/children ^:noria/unordered?[{:noria/type :hoy
+                                                      :hoy/x 1}
+                                                     {:noria/type :hiy}]}
                    [#:noria{:update-type :set-attr, :attr :hoy/x, :node 2, :value 1}]]]))
 
 (def type-comp
