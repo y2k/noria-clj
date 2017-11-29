@@ -108,10 +108,12 @@
                            ([state expr] (assoc state ::expr expr))
                            ([state] state))))
           state (or state (render))
-          state' (render state args)          
+          state' (render state args)
           [subst' ctx'] (if (and (some? old-value) (::skip-subtree? state'))
                           [subst ctx]
                           (reconcile* id-path subst (::expr state') env ctx))]
+      (assert (some? (::expr state')) {:id-path id-path
+                                       :expr expr})
       [{::state state'
         ::expr expr
         ::id id
