@@ -444,8 +444,8 @@
                     #:noria{:update-type :remove, :attr :dom/children, :node 2, :value 3}
                     #:noria{:update-type :add, :attr :dom/children, :node 2, :value 4, :index 0}
                     #:noria{:update-type :add, :attr :dom/children, :node 2, :value 5, :index 1}
-                    #:noria{:update-type :destroy, :node 3}
-                    #:noria{:update-type :destroy, :node 0}]]]))
+                    #:noria{:update-type :destroy, :node 0}
+                    #:noria{:update-type :destroy, :node 3}]]]))
 
 (def type-from-state
   (fn [r-f]

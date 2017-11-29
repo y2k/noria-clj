@@ -79,16 +79,20 @@
         :else nil))
 
 (defn destroy-value [ctx value]
-  (->> (tree-seq (constantly true) get-children value)
-       (remove (comp component-ref? ::expr))
-       (map (fn [v]
-              (when (user-component? (::expr v))
-                ((::render v) (::state v)))
-              v))
-       (map ::result)
-       (dedupe)
-       (reduce (fn [ctx n]
-                 (update ctx :garbage conj n)) ctx)))
+  (update ctx :garbage
+          (fn [g]
+            (transduce (comp 
+                        (remove (comp component-ref? ::expr))
+                        (map (fn [v]
+                               (when (user-component? (::expr v))
+                                 ((::render v) (::state v)))
+                               v))
+                        (map ::result)
+                        (filter some?)
+                        (dedupe))
+                       conj!
+                       g
+                       (tree-seq (constantly true) get-children value)))))
 
 (declare reconcile*)
 
@@ -399,10 +403,12 @@
             (supply ctx {::update-type :destroy
                          ::node g}))
           (dissoc ctx :garbage)
-          (:garbage ctx)))
+          (persistent! (:garbage ctx))))
 
 (defn reconcile [old-value expr ctx]
-  (let [ctx (assoc ctx :updates (transient []))
+  (let [ctx (assoc ctx
+                   :updates (transient [])
+                   :garbage (transient []))
         [new-value ctx'] (reconcile* [] old-value expr env-0 ctx)]
     [new-value (-> ctx'
                    (destroy-garbage)
@@ -496,7 +502,9 @@
                 ctx)))
 
 (defn reconcile-in [old-value path state-fn ctx]
-  (let [[new-value ctx'] (reconcile-in* [] old-value (rest path) state-fn (assoc ctx :updates (transient [])))]
+  (let [[new-value ctx'] (reconcile-in* [] old-value (rest path) state-fn (assoc ctx
+                                                                                 :updates (transient [])
+                                                                                 :garbage (transient [])))]
     [new-value (-> ctx'
                    (destroy-garbage)
                    (update :updates persistent!))]))
