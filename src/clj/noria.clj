@@ -32,7 +32,7 @@
                       (.put indices type (inc idx))
                       (r-f s (assign-key e [type idx])))))
                  ([s] (r-f s)))))]
-    (into (if (set? elements) #{} []) (comp (filter some?) xf) elements)))
+    (into (if (set? elements) #{} []) xf elements)))
 
 (defn user-component? [x]
   (and (vector? x)
@@ -170,37 +170,22 @@
                         to-remove)
           idx (count (clojure.set/intersection new-nodes old-nodes))
           adds (into []
-                     (comp
-                      (map-indexed
-                       (fn [i node]
-                         {::update-type :add
-                          ::attr attr
-                          ::node parent-node
-                          ::value node
-                          ::index (+ idx i)})))
+                     (map-indexed
+                      (fn [i node]
+                        {::update-type :add
+                         ::attr attr
+                         ::node parent-node
+                         ::value node
+                         ::index (+ idx i)}))
                      to-add)]
-      (as-> ctx <!>
-        (reduce supply <!> removes)
-        (reduce supply <!> adds)))))
-
-(defn collect-reusable-values [old-by-keys new-keys]
-  (reduce (fn [^java.util.HashMap hm [key old-value]]
-            (when (not (contains? new-keys key))
-              (when-let [c-type (-> old-value ::expr get-type)]
-                (let [^java.util.ArrayDeque l (or (.get hm c-type)
-                                                  (let [l (java.util.ArrayDeque.)]
-                                                    (.put hm c-type l)
-                                                    l))]
-                  (.push l old-value))))
-            hm)
-          (java.util.HashMap.)
-          old-by-keys))
-
-(defn hs-conj! [^java.util.HashSet hs v] (.add hs v) hs)
-(defn hm-assoc! [^java.util.HashMap hm [k v]] (.put hm k v) hm)
+      (as-> ctx <>
+        (reduce supply <> removes)
+        (reduce supply <> adds)))))
 
 (defn reconcile-by-keys [ppath old-values new-exprs env ctx]
-  (let [new-exprs' (assign-keys new-exprs)
+  (let [hs-conj! (fn [^java.util.HashSet hs v] (.add hs v) hs)
+        hm-assoc! (fn [^java.util.HashMap hm [k v]] (.put hm k v) hm)
+        new-exprs' (assign-keys new-exprs)
         new-keys (transduce (keep get-key)
                             (completing hs-conj!)
                             (java.util.HashSet.)
@@ -212,7 +197,17 @@
                                       (java.util.HashMap.)
                                       old-values)
         ^java.util.HashSet old-values-set (reduce hs-conj! (java.util.HashSet.) old-values)
-        ^java.util.HashMap to-reuse (collect-reusable-values old-values-by-keys new-keys)
+        ^java.util.HashMap to-reuse (reduce (fn [^java.util.HashMap hm [key old-value]]
+                                              (when (not (contains? new-keys key))
+                                                (when-let [c-type (-> old-value ::expr get-type)]
+                                                  (let [^java.util.ArrayDeque l (or (.get hm c-type)
+                                                                                    (let [l (java.util.ArrayDeque.)]
+                                                                                      (.put hm c-type l)
+                                                                                      l))]
+                                                    (.push l old-value))))
+                                              hm)
+                                            (java.util.HashMap.)
+                                            old-values-by-keys)
         [new-values ctx'] (reduce (fn [[new-values ctx] expr]
                                     (let [old-value (or (get old-values-by-keys (get-key expr))
                                                         (when-let [e-type (get-type expr)]
@@ -230,10 +225,12 @@
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
         unordered? (set? new-exprs)
         old-nodes (into (if unordered? #{} [])
-                        (map ::result)
+                        (comp (map ::result)
+                              (filter some?))
                         old-values)
         new-nodes (into (if unordered? #{} [])
-                        (map ::result)
+                        (comp (map ::result)
+                              (filter some?))
                         new-values)
         ctx'' (if unordered?
                 (update-set parent-node attr old-nodes new-nodes ctx')
@@ -375,9 +372,9 @@
                        (destroy-value ctx old-value)
                        ctx)]
     (component-ref? expr) (let [var-value (env expr)]
-                            (assert (some? var-value) {:var expr
-                                                       :env env
-                                                       :old-value old-value})
+                            (assert (contains? env expr) {:var expr
+                                                          :env env
+                                                          :old-value old-value})
                             [{::expr expr
                               ::env env
                               ::result (::result var-value)} ctx])
@@ -389,13 +386,15 @@
 
 (def env-0 {:next-var 0})
 
+(def context-0 {:next-node 0
+                :next-id 0})
+
 (defn destroy-garbage [ctx]
-  (as-> ctx <>
-    (dissoc <> :garbage)
-    (reduce (fn [ctx g]
-              (supply ctx {::update-type :destroy
-                           ::node g}))
-            <> (:garbage ctx))))
+  (reduce (fn [ctx g]
+            (supply ctx {::update-type :destroy
+                         ::node g}))
+          (dissoc ctx :garbage)
+          (:garbage ctx)))
 
 (defn reconcile [old-value expr ctx]
   (let [ctx (assoc ctx :updates (transient []))
@@ -429,61 +428,62 @@
 
 (defn reconcile-in* [ppath {::keys [expr id] :as old-value} [p & rest-path] state-fn ctx]
   (if (some? p)
-    (let [continue (fn [old-value ctx] (reconcile-in* (conj ppath id)
-                                                     old-value
-                                                     rest-path
-                                                     state-fn
-                                                     ctx))]
+    (let [continue (fn [old-value ctx] (reconcile-in* (conj ppath id) old-value rest-path state-fn ctx))]
       (cond
-        (user-component? expr) (update-with-ctx old-value ::subst continue ctx)
-        (primitive-component? expr) (reduce
-                                     (fn [[old-value ctx :as result] [attr v]]
-                                       (case (get-data-type attr)
-                                         :node (if (= p (::id v))
-                                                 (let [[new-v ctx'] (continue (old-value attr) ctx)]
-                                                   (reduced [(assoc old-value attr new-v)
-                                                             (if (not= new-v v)
-                                                               (supply ctx' {::update-type :set-attr
-                                                                             ::node (::result old-value)
-                                                                             ::attr attr
-                                                                             ::value (::result new-v)})
-                                                               ctx')]))
-                                                 result)
-                                         :nodes-seq (let [[new-v ctx' found?]
-                                                          (update-by-id-with-ctx
-                                                           v p ::id
-                                                           (fn [i e ctx]
-                                                             (let [[new-e ctx'] (continue e ctx)]
-                                                               [new-e (-> ctx'
-                                                                          (cond-> (not= (::result e) (::result new-e))
-                                                                            (-> (supply {::update-type :remove
-                                                                                         ::node (::result old-value)
-                                                                                         ::attr attr
-                                                                                         ::value (::result e)})
-                                                                                (cond-> (some? new-e)
-                                                                                  (supply {::update-type :add
-                                                                                           ::node (::result old-value)
-                                                                                           ::index i
-                                                                                           ::attr attr
-                                                                                           ::value (::result new-e)})))))])) ctx)]
-                                                      (if found?
-                                                        (reduced [(assoc old-value attr new-v) ctx'])
-                                                        result))
-                                         result))
-                                     [old-value ctx] old-value)
-        (apply? expr) (if (= p (::id (::subst old-value)))
-                        (update-with-ctx old-value ::subst continue ctx)
-                        (update-with-ctx old-value ::args (fn [args ctx]
-                                                            (update-by-id-with-ctx args p ::id
-                                                                                   (fn [i v ctx] (continue v ctx)) ctx))
-                                         ctx))
-        (do? expr) (update-with-ctx old-value ::children
-                                    (fn [old-children ctx]
-                                      (update-by-id-with-ctx old-children p ::id (fn [i v ctx] (continue v ctx)) ctx)) ctx)
-        :else (throw (ex-info "component not found for path" {:ppath ppath
-                                                              :p p
-                                                              :rest-path rest-path
-                                                              :old-value old-value}))))
+        (user-component? expr)
+        (update-with-ctx old-value ::subst continue ctx)
+        (primitive-component? expr)
+        (reduce
+         (fn [[old-value ctx :as result] [attr v]]
+           (case (get-data-type attr)
+             :node (if (= p (::id v))
+                     (let [[new-v ctx'] (continue (old-value attr) ctx)]
+                       (reduced [(assoc old-value attr new-v)
+                                 (if (not= new-v v)
+                                   (supply ctx' {::update-type :set-attr
+                                                 ::node (::result old-value)
+                                                 ::attr attr
+                                                 ::value (::result new-v)})
+                                   ctx')]))
+                     result)
+             :nodes-seq (let [[new-v ctx' found?]
+                              (update-by-id-with-ctx
+                               v p ::id
+                               (fn [i e ctx]
+                                 (let [[new-e ctx'] (continue e ctx)]
+                                   [new-e (-> ctx'
+                                              (cond-> (not= (::result e) (::result new-e))
+                                                (-> (supply {::update-type :remove
+                                                             ::node (::result old-value)
+                                                             ::attr attr
+                                                             ::value (::result e)})
+                                                    (cond-> (some? new-e)
+                                                      (supply {::update-type :add
+                                                               ::node (::result old-value)
+                                                               ::index i
+                                                               ::attr attr
+                                                               ::value (::result new-e)})))))])) ctx)]
+                          (if found?
+                            (reduced [(assoc old-value attr new-v) ctx'])
+                            result))
+             result))
+         [old-value ctx] old-value)
+        (apply? expr)
+        (if (= p (::id (::subst old-value)))
+          (update-with-ctx old-value ::subst continue ctx)
+          (update-with-ctx old-value ::args (fn [args ctx]
+                                              (update-by-id-with-ctx args p ::id
+                                                                     (fn [i v ctx] (continue v ctx)) ctx))
+                           ctx))
+        (do? expr)
+        (update-with-ctx old-value ::children
+                         (fn [old-children ctx]
+                           (update-by-id-with-ctx old-children p ::id (fn [i v ctx] (continue v ctx)) ctx)) ctx)
+        :else
+        (throw (ex-info "component not found for path" {:ppath ppath
+                                                        :p p
+                                                        :rest-path rest-path
+                                                        :old-value old-value}))))
     (reconcile* ppath
                 (update old-value ::state state-fn)
                 (::expr old-value)
@@ -495,6 +495,3 @@
     [new-value (-> ctx'
                    (destroy-garbage)
                    (update :updates persistent!))]))
-
-(def context-0 {:next-node 0
-                :next-id 0})
