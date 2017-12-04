@@ -9,14 +9,18 @@
       ([state]
        (r-f state)))))
 
-(defn skip-subtree [pred]
-  (fn [r-f]
-    (fn
-      ([] (r-f))
-      ([state args]
-       (r-f (assoc state
-                   :noria/skip-subtree? (pred state args)) args))
-      ([state] (r-f state)))))
+(defn conjunction [preds]
+  (reduce (fn [s p] (fn [a b] (and (p a b) (s a b)))) (constantly true) preds))
+
+(defn skip-subtree [& preds]
+  (let [pred (conjunction preds)]
+    (fn [r-f]
+      (fn
+        ([] (r-f))
+        ([state args]
+         (r-f (assoc state
+                     :noria/skip-subtree? (pred state args)) args))
+        ([state] (r-f state))))))
 
 (defn update-args []
   (fn [r-f]
@@ -28,7 +32,7 @@
       ([state] (r-f state)))))
 
 (defn cache [& preds]
-  (let [pred (reduce (fn [s p] (fn [a b] (and (p a b) (s a b)))) (constantly true) preds)]
+  (let [pred (conjunction preds)]
     (fn [r-f]
       (fn
         ([] (r-f))
