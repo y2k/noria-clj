@@ -323,12 +323,12 @@
       (let [constructor-parameter? (get-constructor-parameters (::type expr))
             [constructor-data constructor-attrs ctx'] (reconcile-constructor-parameters id-path expr env ctx)
             [new-node ctx''] (make-node (::type expr) constructor-data ctx')
-            [component ctx'''] (reconcile-attrs id-path
-                                                {::result new-node}
-                                                (into {} (remove (comp constructor-parameter? first)) expr)
-                                                env ctx'')]
+            [reconciled-attrs ctx'''] (reconcile-attrs id-path
+                                                       {::result new-node}
+                                                       (into {} (remove (comp constructor-parameter? first)) expr)
+                                                       env ctx'')]
         [(merge constructor-attrs
-                component
+                reconciled-attrs
                 {::result new-node
                  ::id id
                  ::env env
@@ -448,9 +448,9 @@
          (fn [[old-value ctx :as result] [attr v]]
            (case (get-data-type attr)
              :node (if (= p (::id v))
-                     (let [[new-v ctx'] (continue (old-value attr) ctx)]
+                     (let [[new-v ctx'] (continue v ctx)]
                        (reduced [(assoc old-value attr new-v)
-                                 (if (not= new-v v)
+                                 (if (not= (::result new-v) (::result v))
                                    (supply ctx' {::update-type :set-attr
                                                  ::node (::result old-value)
                                                  ::attr attr
