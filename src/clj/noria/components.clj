@@ -9,18 +9,15 @@
       ([state]
        (r-f state)))))
 
+(defn stateful [render-fn]
+  (fn [r-f]
+    (fn
+      ([] (r-f))
+      ([state args] (r-f state (apply render-fn state args)))
+      ([state] (r-f state)))))
+
 (defn conjunction [preds]
   (reduce (fn [s p] (fn [a b] (and (p a b) (s a b)))) (constantly true) preds))
-
-(defn skip-subtree [& preds]
-  (let [pred (conjunction preds)]
-    (fn [r-f]
-      (fn
-        ([] (r-f))
-        ([state args]
-         (r-f (assoc state
-                     :noria/skip-subtree? (pred state args)) args))
-        ([state] (r-f state))))))
 
 (defn update-args []
   (fn [r-f]
@@ -31,6 +28,13 @@
            (assoc ::args args)))
       ([state] (r-f state)))))
 
+(defn compare-args
+  "Given predicate of new-args and old-args returns predicate of state and new args"
+  [pred]
+  (fn [{args :noria.components/args} args']
+    (and (not= args :noria.components/nil)
+         (pred args args'))))
+
 (defn cache [& preds]
   (let [pred (conjunction preds)]
     (fn [r-f]
@@ -38,15 +42,34 @@
         ([] (r-f))
         ([state args]
          (if (pred state args)
-             state
-             (r-f state args)))
+           state
+           (r-f state args)))
         ([state] (r-f state))))))
 
-(defn pure-if [pred]
+(defn skip-subtree
+  "Preds will be called with current state and vector of new args.
+  If all of them are true, render will not be called for this component and all of his subs will not be reconciled."
+  [& preds]
+  (let [pred (conjunction preds)]
+    (comp
+     (update-args)
+     (fn [r-f]
+       (fn
+         ([] (r-f))
+         ([state args]
+          (r-f (assoc state
+                      :noria/skip-subtree? (pred state args)) args))
+         ([state] (r-f state))))
+     (cache pred))))
+
+(defn pure-if
+  "Predicate will be called with two arguments: vector of old args and vector of new args. 
+  If it returns true, previous state will be reused for this element (including render result).
+  Then reconciliation process continues as usual"
+  [pred]
   (comp
    (update-args)
-   (cache (fn [state args] (and (not= ::nil (::args state))
-                               (pred (::args state) args))))))
+   (cache (compare-args pred))))
 
 (defn pure []
   (pure-if =))
@@ -85,8 +108,3 @@
                   (not save?) (assoc ::special-states {}))
               (assoc-in [::special-states key] state*'))))
        ([state] (r-f state))))))
-
-(defn compare-args [pred]
-  (fn [{args :noria.components/args} args']
-    (and (not= args :noria.components/nil)
-         (pred args args'))))
