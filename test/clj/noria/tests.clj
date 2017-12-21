@@ -74,7 +74,7 @@
   (render
    (fn [x]
      {:noria/type :div
-      :noria/text (str x)})))
+      ::text (str x)})))
 
 (def lambda
   (render
@@ -88,13 +88,13 @@
 (deftest reconcile-lambda
   (check-updates [[[lambda "hello"]
                    [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 0, :value "hello"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 0, :value "hello"}
                     #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :dom/child, :node 1, :value 0}
-                    #:noria{:update-type :add, :attr :dom/children, :node 1, :value 0, :index 0}]]
+                    #:noria{:update-type :add, :attr :dom/children, :node 1, :value 0, :index 0}
+                    #:noria{:update-type :set-attr, :attr :dom/child, :node 1, :value 0}]]
                   [[lambda "hello"] []]
                   [[lambda "bye"]
-                   [#:noria{:update-type :set-attr, :attr :noria/text, :node 0, :value "bye"}]]]) 
+                   [#:noria{:update-type :set-attr, :attr ::text, :node 0, :value "bye"}]]]) 
   )
 
 (def simple-container
@@ -108,9 +108,9 @@
   (check-updates [[[simple-container 2]
                    [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
                     #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 1, :value "0"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 1, :value "0"}
                     #:noria{:update-type :make-node, :node 2, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 2, :value "1"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 2, :value "1"}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
                   [[simple-container 2]
@@ -120,9 +120,9 @@
                     #:noria{:update-type :destroy, :node 2}]]
                   [[simple-container 3]
                    [#:noria{:update-type :make-node, :node 3, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 3, :value "1"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 3, :value "1"}
                     #:noria{:update-type :make-node, :node 4, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 4, :value "2"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 4, :value "2"}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 1}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}]]
                   [[simple-container 2]
@@ -137,11 +137,11 @@
 (deftest reconcile-do-block
   (check-updates [[[do-block 3]
                    [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 0, :value "0"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 0, :value "0"}
                     #:noria{:update-type :make-node, :node 1, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 1, :value "1"}
+                    #:noria{:update-type :set-attr, :attr ::text, :node 1, :value "1"}
                     #:noria{:update-type :make-node, :node 2, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :set-attr, :attr :noria/text, :node 2, :value "2"}]]
+                    #:noria{:update-type :set-attr, :attr ::text, :node 2, :value "2"}]]
                   [[do-block 3] []]
                   [[do-block 1]
                    [#:noria{:update-type :destroy, :node 1}
@@ -269,8 +269,8 @@
         [value ctx] (reconcile nil elt context-0)
         [new-value ctx'] (noria/reconcile-in value @will-update-path #(assoc % :counter 42) ctx)]
     (is (= (:updates ctx')
-           [#:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}
-            #:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}]))))
+           [#:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}
+            #:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}]))))
 
 (def counter
   (render
@@ -281,7 +281,7 @@
 
 (def component-with-caching
   (comp
-   (skip-subtree (constantly true))
+   (skip-subtree (compare-args (constantly true)))
    (render (fn [a]
              [counter a]))))
 
@@ -473,6 +473,16 @@
                     :value 2}
             #:noria{:update-type :destroy, :node 1}]
            (:updates ctx')))))
+
+(deftest different-attrs
+  (check-updates [[{:noria/type :foo
+                    :foo/x 1}
+                   [#:noria{:update-type :make-node, :node 0, :type :foo, :constructor-parameters {}}
+                    #:noria{:update-type :set-attr, :attr :foo/x, :node 0, :value 1}]]
+                  [{:noria/type :foo
+                    :foo/y 1}
+                   [#:noria{:update-type :set-attr, :attr :foo/y, :node 0, :value 1}
+                    #:noria{:update-type :set-attr, :attr :foo/x, :node 0, :value nil}]]]))
 
 (run-tests)
 

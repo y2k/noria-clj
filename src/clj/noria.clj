@@ -262,9 +262,11 @@
 
 (defn reconcile-attrs [ppath old expr env ctx]
   (let [node (::result old)
+        expr' (dissoc expr ::key ::type)
         [new ctx'] (reduce
-                    (fn [[res ctx] [attr new-expr]]
-                      (let [old-value (get old attr)
+                    (fn [[res ctx] attr]
+                      (let [new-expr (get expr attr)
+                            old-value (get old attr)
                             [new-value ctx']
                             (case (get-data-type attr)
                               :simple-value [new-expr (if (not= old-value new-expr)
@@ -277,7 +279,9 @@
                                                    ctx')]))]
                         [(assoc! res attr new-value) ctx']))
                     [(transient {}) ctx]
-                    (dissoc expr ::key ::type))]
+                    (-> #{}
+                        (into (remove #(and (keyword? %) (= (namespace %) "noria"))) (keys old))
+                        (into (remove #(and (keyword? %) (= (namespace %) "noria"))) (keys expr))))]
     [(persistent! new) ctx']))
 
 (defn reconcile-constructor-parameters [ppath expr env ctx]
