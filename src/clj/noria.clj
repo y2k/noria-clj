@@ -88,8 +88,7 @@
                                  ((::render v) (::state v)))
                                v))
                         (map ::result)
-                        (filter some?)
-                        (dedupe))
+                        (filter some?))
                        conj!
                        g
                        (tree-seq (constantly true) get-children value)))))
@@ -403,11 +402,13 @@
                 :next-id 0})
 
 (defn destroy-garbage [ctx]
-  (reduce (fn [ctx g]
-            (supply ctx {::update-type :destroy
-                         ::node g}))
-          (dissoc ctx :garbage)
-          (persistent! (:garbage ctx))))
+  (transduce
+   (comp (distinct)
+         (map (fn [g] {::update-type :destroy
+                       ::node g})))
+   (completing supply)
+   (dissoc ctx :garbage)
+   (persistent! (:garbage ctx))))
 
 (defn reconcile [old-value expr ctx]
   (let [ctx (assoc ctx
