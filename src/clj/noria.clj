@@ -115,8 +115,7 @@
           [subst' ctx'] (if (and (some? old-value) (::skip-subtree? state'))
                           [subst ctx]
                           (reconcile* id-path subst (::expr state') env ctx))]
-      (assert (some? (::expr state')) {:id-path id-path
-                                       :expr expr})
+      (assert (contains? state' ::expr) {:id-path id-path :expr expr})
       [{::state state'
         ::expr expr
         ::id id
