@@ -66,16 +66,18 @@
 (defn defconstructor [node-type attrs]
   (swap! constructor-parameters assoc node-type attrs))
 
-(defn get-children [value]
-  (cond (user-component? (::expr value)) [(::subst value)]
-        (primitive-component? (::expr value)) (mapcat
-                                               (fn [[attr v]]
-                                                 (case (get-data-type attr)
-                                                   :nodes-seq v
-                                                   :node [v]
-                                                   nil)) value)
-        (apply? (::expr value)) (conj (::args value) (::subst value))
-        (do? (::expr value)) (::children value)
+(defn get-children [{::keys [expr] :as value}]
+  (cond (user-component? expr) [(::subst value)]
+        (primitive-component? expr) (if (or (= (::type expr) :dom/div)
+                                            (= (::type expr) :dom/span))
+                                      (:dom/children value)
+                                      (reduce-kv (fn [s attr v]
+                                                   (case (get-data-type attr)
+                                                     :nodes-seq (if (nil? s) v (into s v))
+                                                     :node (if (nil? s) [v] (conj s v))
+                                                     s)) nil value))
+        (apply? expr) (conj (::args value) (::subst value))
+        (do? expr) (::children value)
         :else nil))
 
 (defn destroy-value [ctx value]
@@ -116,8 +118,8 @@
           [subst' ctx'] (if (and (some? old-value) (::skip-subtree? state'))
                           [subst ctx]
                           (reconcile* id-path subst (::expr state') env ctx))]
-      (assert (some? (::expr state')) {:id-path id-path
-                                       :expr expr})
+      (assert (contains? state' ::expr) {:id-path id-path
+                                         :expr expr})
       [{::state state'
         ::expr expr
         ::id id
@@ -260,10 +262,25 @@
                ::node node
                ::value value}))
 
+(defn reduce-keys-of-two-maps [r-f state m1 m2]
+  (let [noria-key? #(and (keyword? %) (= (namespace %) "noria"))]
+    (as-> state <>
+      (reduce-kv (fn [state a v]
+                   (if (noria-key? a)
+                     state
+                     (r-f state a)))
+                 <> m1)
+      (reduce-kv (fn [state a v]
+                   (if (or (noria-key? a) (contains? m1 a))
+                     state
+                     (r-f state a)))
+                 <> m2))))
+
 (defn reconcile-attrs [ppath old expr env ctx]
   (let [node (::result old)
         expr' (dissoc expr ::key ::type)
-        [new ctx'] (reduce
+        
+        [new ctx'] (reduce-keys-of-two-maps
                     (fn [[res ctx] attr]
                       (let [new-expr (get expr attr)
                             old-value (get old attr)
@@ -279,9 +296,7 @@
                                                    ctx')]))]
                         [(assoc! res attr new-value) ctx']))
                     [(transient {}) ctx]
-                    (-> #{}
-                        (into (remove #(and (keyword? %) (= (namespace %) "noria"))) (keys old))
-                        (into (remove #(and (keyword? %) (= (namespace %) "noria"))) (keys expr))))]
+                    old expr)]
     [(persistent! new) ctx']))
 
 (defn reconcile-constructor-parameters [ppath expr env ctx]
