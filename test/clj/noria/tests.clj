@@ -229,6 +229,26 @@
                             :attr :label2/text,
                             :node 1, :value "ho"}]]]))
 
+(deftest destroy-apply-should-destroy-bound-components-once
+  (check-updates [[[constraint "hey" "ho"]
+                   [#:noria{:update-type :make-node, :node 0, :type :fake/label, :constructor-parameters #:label{:text "hey"}}
+                    #:noria{:update-type :make-node, :node 1, :type :fake/label2, :constructor-parameters #:label2{:text "ho"}}
+                    #:noria{:update-type :make-node, :node 2, :type :fake/constraint, :constructor-parameters #:constraint{:view1 0, :view2 1}}
+                    #:noria{:update-type :make-node, :node 3, :type :Container, :constructor-parameters {}}
+                    #:noria{:update-type :add, :attr :dom/children, :node 3, :value 0, :index 0}
+                    #:noria{:update-type :add, :attr :dom/children, :node 3, :value 1, :index 1}]]
+                  [{:noria/type :nevermind}
+                   [#:noria{:update-type :make-node, :node 4, :type :nevermind, :constructor-parameters {}}
+                    #:noria{:update-type :destroy, :node 3}
+                    #:noria{:update-type :destroy, :node 0}
+                    #:noria{:update-type :destroy, :node 1}
+                    #:noria{:update-type :destroy, :node 2}]
+                   [#:noria{:update-type :make-node, :node 4, :type :nevermind, :constructor-parameters {}}
+                    #:noria{:update-type :destroy, :node 3}
+                    #:noria{:update-type :destroy, :node 0}
+                    #:noria{:update-type :destroy, :node 1}
+                    #:noria{:update-type :destroy, :node 2}]]]))
+
 (deftest reconcile-node-attr
   (check-updates [[[window]
                    [#:noria{:update-type :make-node,

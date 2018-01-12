@@ -90,8 +90,7 @@
                                  ((::render v) (::state v)))
                                v))
                         (map ::result)
-                        (filter some?)
-                        (dedupe))
+                        (filter some?))
                        conj!
                        g
                        (tree-seq (constantly true) get-children value)))))
@@ -118,8 +117,7 @@
           [subst' ctx'] (if (and (some? old-value) (::skip-subtree? state'))
                           [subst ctx]
                           (reconcile* id-path subst (::expr state') env ctx))]
-      (assert (contains? state' ::expr) {:id-path id-path
-                                         :expr expr})
+      (assert (contains? state' ::expr) {:id-path id-path :expr expr})
       [{::state state'
         ::expr expr
         ::id id
@@ -418,11 +416,13 @@
                 :next-id 0})
 
 (defn destroy-garbage [ctx]
-  (reduce (fn [ctx g]
-            (supply ctx {::update-type :destroy
-                         ::node g}))
-          (dissoc ctx :garbage)
-          (persistent! (:garbage ctx))))
+  (transduce
+   (comp (distinct)
+         (map (fn [g] {::update-type :destroy
+                       ::node g})))
+   (completing supply)
+   (dissoc ctx :garbage)
+   (persistent! (:garbage ctx))))
 
 (defn reconcile [old-value expr ctx]
   (let [ctx (assoc ctx
