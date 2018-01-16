@@ -9,7 +9,7 @@
 (defn check-updates [elements]
   (reduce (fn [[old-value ctx] [el updates]]
             (let [[new-value ctx'] (reconcile old-value el ctx)]
-              (is (= updates (:updates ctx')) "wrong updates")
+              (is (= (set updates) (set (:updates ctx'))) "wrong updates")
               [new-value (dissoc ctx' :updates)]))
           [nil context-0] elements))
 
@@ -288,9 +288,9 @@
              [div "sibling2"]]
         [value ctx] (reconcile nil elt context-0)
         [new-value ctx'] (noria/reconcile-in value @will-update-path #(assoc % :counter 42) ctx)]
-    (is (= (:updates ctx')
-           [#:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}
-            #:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}]))))
+    (is (= (set (:updates ctx'))
+           #{#:noria{:update-type :set-attr, :attr :counter, :node 3, :value 2}
+             #:noria{:update-type :set-attr, :attr :counter, :node 2, :value 42}}))))
 
 (def counter
   (render
@@ -503,6 +503,19 @@
                     :foo/y 1}
                    [#:noria{:update-type :set-attr, :attr :foo/y, :node 0, :value 1}
                     #:noria{:update-type :set-attr, :attr :foo/x, :node 0, :value nil}]]]))
+
+(deftest expr-changes-type
+  (check-updates [[[type-comp :foo]
+                   [#:noria{:update-type :make-node, :node 0, :type :foo, :constructor-parameters {}}]]
+                  [['apply (fn [x] x) [type-comp :foo]]
+                   [#:noria{:update-type :make-node, :node 1, :type :foo, :constructor-parameters {}} #:noria{:update-type :destroy, :node 0}]]
+                  ])
+
+  (check-updates [[[type-comp :foo]
+                   [#:noria{:update-type :make-node, :node 0, :type :foo, :constructor-parameters {}}]]
+                  [['do [type-comp :foo]]
+                   [#:noria{:update-type :make-node, :node 1, :type :foo, :constructor-parameters {}}
+                    #:noria{:update-type :destroy, :node 0}]]]))
 
 (run-tests)
 

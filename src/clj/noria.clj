@@ -402,10 +402,18 @@
                             [{::expr expr
                               ::env env
                               ::result (::result var-value)} ctx])
-    (user-component? expr) (reconcile-user ppath old-value expr env ctx)
-    (primitive-component? expr) (reconcile-primitive ppath old-value expr env  ctx)
-    (apply? expr) (reconcile-apply ppath old-value expr env ctx)
-    (do? expr) (reconcile-do ppath old-value expr env ctx)
+    (user-component? expr) (if (and old-value (not (user-component? (::expr old-value))))
+                             (recur ppath nil expr env (destroy-value ctx old-value))
+                             (reconcile-user ppath old-value expr env ctx))
+    (primitive-component? expr) (if (and old-value (not (primitive-component? (::expr old-value))))
+                                  (recur ppath nil expr env (destroy-value ctx old-value))
+                                  (reconcile-primitive ppath old-value expr env  ctx))
+    (apply? expr) (if (and old-value (not (apply? (::expr old-value))))
+                    (recur ppath nil expr env (destroy-value ctx old-value))
+                    (reconcile-apply ppath old-value expr env ctx))
+    (do? expr) (if (and old-value (not (do? (::expr old-value))))
+                 (recur ppath nil expr env (destroy-value ctx old-value))
+                 (reconcile-do ppath old-value expr env ctx))
     :else (throw (ex-info "don't know how to reconcile " {:expr expr}))))
 
 (def env-0 {:next-var 0})
