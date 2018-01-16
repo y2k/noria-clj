@@ -41,9 +41,10 @@
       (fn
         ([] (r-f))
         ([state args]
-         (if (pred state args)
-           state
-           (r-f state args)))
+         (dissoc (if (and (not (::suppress-cache? state)) (pred state args))
+                   state
+                   (r-f state args))
+                 ::suppress-cache?))
         ([state] (r-f state))))))
 
 (defn skip-subtree

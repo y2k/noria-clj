@@ -276,8 +276,6 @@
 
 (defn reconcile-attrs [ppath old expr env ctx]
   (let [node (::result old)
-        expr' (dissoc expr ::key ::type)
-        
         [new ctx'] (reduce-keys-of-two-maps
                     (fn [[res ctx] attr]
                       (let [new-expr (get expr attr)
