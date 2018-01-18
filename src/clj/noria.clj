@@ -332,6 +332,7 @@
           [(assoc reconciled-attrs
                   ::id id
                   ::id-path id-path
+                  ::env env
                   ::expr expr
                   ::result (::result old-value))
            ctx']))
