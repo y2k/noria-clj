@@ -1,4 +1,5 @@
 (ns noria
+  (:require [clojure.data.int-map :as i])
   (:import [noria LCS]))
 
 (defn get-key [x]
@@ -32,7 +33,7 @@
                       (.put indices type (inc idx))
                       (r-f s (assign-key e [type idx])))))
                  ([s] (r-f s)))))]
-    (into (if (set? elements) #{} []) xf elements)))
+    (into (if (set? elements) (i/int-set) []) xf elements)))
 
 (defn user-component? [x]
   (and (vector? x)
@@ -134,8 +135,8 @@
 (defn update-order [parent-node attr old-nodes new-nodes ctx]
   (if (= old-nodes new-nodes)
     ctx
-    (let [moved? (complement (into #{} (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
-          old-nodes-set (into #{} old-nodes)
+    (let [moved? (complement (into (i/int-set) (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
+          old-nodes-set (i/int-set old-nodes)
           removes (into []
                         (keep
                          (fn [node]
@@ -144,7 +145,7 @@
                               ::attr attr
                               ::node parent-node
                               ::value node})))
-                        (into old-nodes-set new-nodes))
+                        old-nodes)
           adds (into []
                      (comp
                       (map-indexed
@@ -164,8 +165,8 @@
 (defn update-set [parent-node attr old-nodes new-nodes ctx]
   (if (= old-nodes new-nodes)
     ctx
-    (let [to-add (clojure.set/difference new-nodes old-nodes)
-          to-remove (clojure.set/difference old-nodes new-nodes)
+    (let [to-add (i/difference new-nodes old-nodes)
+          to-remove (i/difference old-nodes new-nodes)
           removes (into []
                         (map
                          (fn [node]
@@ -174,7 +175,7 @@
                             ::node parent-node
                             ::value node}))
                         to-remove)
-          idx (count (clojure.set/intersection new-nodes old-nodes))
+          idx (count (i/intersection new-nodes old-nodes))
           adds (into []
                      (map-indexed
                       (fn [i node]
@@ -233,13 +234,11 @@
 (defn reconcile-sequence [ppath parent-node attr old-values new-exprs env ctx]
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
         unordered? (::unordered? (meta new-exprs))
-        old-nodes (into (if unordered? #{} [])
-                        (comp (map ::result)
-                              (filter some?))
+        old-nodes (into (if unordered? (i/int-set) [])
+                        (keep ::result)
                         old-values)
-        new-nodes (into (if unordered? #{} [])
-                        (comp (map ::result)
-                              (filter some?))
+        new-nodes (into (if unordered? (i/int-set) [])
+                        (keep ::result)
                         new-values)
         ctx'' (if unordered?
                 (update-set parent-node attr old-nodes new-nodes ctx')
@@ -367,6 +366,7 @@
     [{::subst subst'
       ::id id
       ::env env
+      ::lambda lambda
       ::id-path id-path
       ::args args-reconciled
       ::result (::result subst')
@@ -467,6 +467,7 @@
   (if (some? p)
     (let [continue (fn [old-value ctx] (reconcile-in* (conj ppath id) old-value rest-path state-fn ctx))]
       (cond
+        (nil? expr) [nil ctx]
         (user-component? expr)
         (update-with-ctx old-value ::subst continue ctx)
         (primitive-component? expr)
@@ -490,10 +491,11 @@
                                  (let [[new-e ctx'] (continue e ctx)]
                                    [new-e (-> ctx'
                                               (cond-> (not= (::result e) (::result new-e))
-                                                (-> (supply {::update-type :remove
-                                                             ::node (::result old-value)
-                                                             ::attr attr
-                                                             ::value (::result e)})
+                                                (-> (cond-> (some? (::result e))
+                                                      (supply {::update-type :remove
+                                                               ::node (::result old-value)
+                                                               ::attr attr
+                                                               ::value (::result e)}))
                                                     (cond-> (some? new-e)
                                                       (supply {::update-type :add
                                                                ::node (::result old-value)
@@ -508,10 +510,19 @@
         (apply? expr)
         (if (= p (::id (::subst old-value)))
           (update-with-ctx old-value ::subst continue ctx)
-          (update-with-ctx old-value ::args (fn [args ctx]
-                                              (update-by-id-with-ctx args p ::id
-                                                                     (fn [i v ctx] (continue v ctx)) ctx))
-                           ctx))
+          (let [[{::keys [args lambda] :as args-reconciled} ctx'] (update-with-ctx old-value ::args (fn [args ctx]
+                                                                                                      (update-by-id-with-ctx args p ::id
+                                                                                                                             (fn [i v ctx] (continue v ctx)) ctx))
+                                                                                   ctx)]
+            (if (= (map ::result (::args old-value))
+                   (map ::result (::args args-reconciled)))
+              [args-reconciled ctx']
+              (throw (ex-info "not implemented"))
+              #_(reconcile* ppath
+                          args-reconciled
+                          (::expr args-reconciled)
+                          (::env args-reconciled)
+                          ctx'))))
         (do? expr)
         (update-with-ctx old-value ::children
                          (fn [old-children ctx]
