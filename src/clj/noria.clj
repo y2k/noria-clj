@@ -9,7 +9,7 @@
 
 (defn get-type [x]
   (if (vector? x)
-    (let [f (first x)]
+    (let [f (nth x 0)]
       (when (and (not= f 'do) (not= f 'apply))
         f))
     (::type x)))
@@ -37,7 +37,7 @@
 
 (defn user-component? [x]
   (and (vector? x)
-       (fn? (first x))))
+       (fn? (nth x 0))))
 
 (def primitive-component? map?)
 
@@ -45,11 +45,11 @@
 
 (defn apply? [x]
   (and (vector? x)
-       (= 'apply (first x))))
+       (= 'apply (nth x 0))))
 
 (defn do? [x]
   (and (vector? x)
-       (= 'do (first x))))
+       (= 'do (nth x 0))))
 
 (defonce schema (atom {}))
 
@@ -214,7 +214,7 @@
                                                     (.push l old-value))))
                                               hm)
                                             (java.util.HashMap.)
-                                            old-values-by-keys)
+                                            (.entrySet old-values-by-keys))
         
         [new-values ctx'] (reduce (fn [[new-values ctx] expr]
                                     (let [old-value (or (get old-values-by-keys (get-key expr))
@@ -229,7 +229,8 @@
                                   new-exprs')]
     [(persistent! new-values) (reduce (fn [ctx [_ val]]
                                         (destroy-value ctx val))
-                                      ctx' old-values-by-keys)]))
+                                      ctx'
+                                      (.entrySet old-values-by-keys))]))
 
 (defn reconcile-sequence [ppath parent-node attr old-values new-exprs env ctx]
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
