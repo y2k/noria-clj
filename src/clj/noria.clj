@@ -10,7 +10,7 @@
 (defn get-type [x]
   (if (vector? x)
     (let [f (nth x 0)]
-      (when (and (not= f 'do) (not= f 'apply))
+      (when (and (not= 'do f) (not= 'apply f))
         f))
     (::type x)))
 
