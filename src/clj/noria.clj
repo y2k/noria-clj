@@ -232,6 +232,8 @@
                                       ctx'
                                       (.entrySet old-values-by-keys))]))
 
+
+
 (defn reconcile-sequence [ppath parent-node attr old-values new-exprs env ctx]
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
         unordered? (::unordered? (meta new-exprs))
@@ -323,6 +325,7 @@
     [(persistent! constructor-data) (persistent! component) ctx']))
 
 (defn reconcile-primitive [ppath {::keys [id] :as old-value} expr env ctx]
+  (onair.log/info :reconciling (get-type expr))
   (let [[id ctx] (alloc-id-if-needed id ctx)
         id-path (conj ppath id)]
     (if (some? old-value)
@@ -546,3 +549,297 @@
     [new-value (-> ctx'
                    (destroy-garbage)
                    (update :updates persistent!))]))
+
+;;; noria-2
+
+
+(def ^:dynamic *dependencies* nil)
+(def ^:dynamic *parent-id* nil)
+(def ^:dynamic *children* nil)
+
+(def ^:dynamic *graph* nil)
+
+(defrecord Calc [value
+                 state
+                 deps
+                 desc
+                 destroy
+                 up-to-date?
+                 eval
+                 args
+                 key
+                 children-by-keys
+                 children])
+
+(def empty-graph {::values (i/int-map)
+                  ::triggers (i/int-set)
+                  ::max-thunk-id 0})
+
+(deftype Thunk [^long id desc]
+  clojure.lang.IDeref
+  (deref [this]
+    (when *dependencies*
+      (swap! *dependencies* conj! id))
+    (assert (some? *graph*) {:error "Thunk deref outside of computation"
+                             :thunk-id id
+                             :desc desc})
+    (let [v (.-value ^Calc (get (::values @*graph*) id))]
+      (if (instance? Thunk v)
+        (deref v)
+        v)))
+  java.lang.Object
+  (toString [this]
+    (str "[Thunk#" id " " desc "]")))
+
+(defmethod print-method Thunk [o, ^java.io.Writer w]
+  (.write w ^String (str o)))
+
+(require '[clojure.pprint :as pprint])
+(defmethod pprint/simple-dispatch Thunk [s]
+  (pr s))
+
+(defn recall [graph parent-id key]
+  (when-let [^Calc parent (get (::values graph) parent-id)]
+    (get (.-children-by-keys parent) key)))
+
+(defn gc [graph ids]
+  (let [rec-ids (into (vector-of :long)
+                      (comp
+                       (map (fn [id]
+                              (tree-seq (constantly true) #(.-children ^Calc (get (::values graph) %)) id)))
+                       (mapcat reverse))
+                      ids)]
+    (update graph ::values (fn [v]
+                             (persistent!
+                              (reduce (fn [v id]
+                                        (let [^Calc c (get (::values graph) id)
+                                              d (.-destroy c)]
+                                          (d (.-state c)))
+                                        (dissoc! v id))
+                                      (transient v)
+                                      rec-ids))))))
+
+(defn reconcile-by-id [graph id {:keys [eval destroy up-to-date? desc key] :as params} args]
+  (let [^Calc calc (get (::values graph) id)]
+    (if (or (contains? (::triggers graph) id)
+            (and calc (apply up-to-date? (.-state calc) args)))
+      graph
+      (let [[graph' state' value' deps' children']
+            (binding [*graph* (atom graph)
+                      *parent-id* id
+                      *dependencies* (atom (transient (i/int-set)))
+                      *children* (atom (transient []))]
+              (let [[state value] (apply eval (when calc (.-state calc)) args)]
+                [@*graph* state value (persistent! @*dependencies*) (persistent! @*children*)]))]
+        (-> graph'
+            (cond-> calc
+              (gc (i/difference (i/int-set (.-children calc))
+                                (into (i/int-set)
+                                      (map second)
+                                      children'))))
+            (assoc-in [::values id]
+                      (Calc. value' state' deps' desc destroy up-to-date? eval args key
+                             (into {} children')
+                             (into (vector-of :long) (map second) children')))
+            (update ::triggers conj id))))))
+
+(defn reconcile-thunk [graph parent-id {:keys [eval destroy up-to-date? desc key] :as params} args]
+  (if-let [id (recall graph parent-id key)]
+    [id (reconcile-by-id graph id params args)]
+    (let [graph' (update graph ::max-thunk-id inc)
+          id (::max-thunk-id graph')]
+      [id (reconcile-by-id graph' id params args)])))
+
+(defn reconcile-self [graph id ^Calc c]
+  (reconcile-by-id graph id {:eval (.-eval c)
+                             :destroy (.-destroy c)
+                             :up-to-date? (.-up-to-date? c)
+                             :desc (.-desc c)
+                             :key (.-key c)} (.-args c)))
+
+(defn run [graph id dirty-set]
+  (let [^Calc c (get (::values graph) id)]
+    (if (or (contains? dirty-set id)
+            (some #(contains? (::triggers graph) %) (.-deps c)))
+      (reduce (fn [g id]
+                (run g id dirty-set))
+              (reconcile-self graph id c)
+              (.-children c))
+      (reduce (fn [g c-id]
+                (let [g' (run g c-id dirty-set)]
+                  (if (some #(contains? (::triggers g') %) (.-deps c))
+                    (reduced (run g' id dirty-set))
+                    g')))
+              graph
+              (.-children c)))))
+
+(defn thunk* [{:keys [eval up-to-date? desc] :as params}]
+  (fn [key & args]
+    (let [[id graph'] (reconcile-thunk @*graph* *parent-id* (assoc params
+                                                                   :key key) args)]
+      (reset! *graph* graph')
+      (swap! *children* conj! [key id])
+      (Thunk. id desc))))
+
+(defn extract-key [args]
+  (if (<= 2 (count args))
+    (let [args-vec (into [] args)]
+      (if (= ::key (first args-vec))
+        [(second args-vec) (drop 2 args-vec)]
+        [(gensym) args]))
+    [(gensym) args]))
+
+(defmacro thunk [& body]
+  `((thunk* {:eval (fn [state#] [state# (do ~@body)])
+              :desc ~(str body)
+              :destroy identity
+             :up-to-date? (constantly false)})
+    (quote ~(gensym))))
+
+(defmacro defthunk [thunk-name eval-fn & {:keys [up-to-date? destroy]}]
+  (let [thunk-sym (symbol (str (name thunk-name) "-thunk"))
+        q-thunk-sym (symbol (name (ns-name *ns*)) (name thunk-sym))]
+    `(do
+       (def ~thunk-sym
+         (thunk* {:eval ~eval-fn
+                  :up-to-date? ~(or up-to-date? `(constantly false))
+                  :destroy ~(or destroy `identity)
+                  :desc '~thunk-name}))
+       (defmacro ~thunk-name [& args#]
+         (let [[key# args'#] (extract-key args#)]
+           (apply list (into ['~q-thunk-sym (list `quote key#)] args'#)))))))
+
+(defn deref-or-value [thunk-or-value]
+  (if (instance? Thunk thunk-or-value)
+    (deref thunk-or-value)
+    thunk-or-value))
+
+(def ^:dynamic *updates* nil)
+(def *next-node (atom 0))
+
+(defthunk attr
+  (fn [state node attr value]
+    (swap! *updates* conj! {:noria/update-type :set-attr
+                            :noria/value (deref-or-value value)
+                            :noria/node node
+                            :noria/attr attr})
+    [(assoc state
+            ::value (deref-or-value value)
+            ::node node
+            ::attr attr)])
+  :up-to-date? (fn [state node attr value] (= (deref-or-value value) (::value state)))
+  :destroy (fn [{::keys [node attr]}]
+             (swap! *updates* conj! {:noria/update-type :set-attr
+                                     :noria/value nil
+                                     :noria/node node
+                                     :noria/attr attr})))
+
+(defthunk node
+  (fn [state type attrs]
+    (let [old-type (::type state)
+          old-node (::node state)
+          node-id (if (= old-type type)
+                    old-node
+                    (let [node-id (swap! *next-node inc)]
+                      (swap! *updates* conj! {:noria/update-type :make-node
+                                              :noria/type type
+                                              :noria/node node-id})
+                      node-id))]
+      (doseq [[k v] attrs]
+        (when v
+          (attr ::key k node-id k v)))
+      [(assoc state
+              ::type type
+              ::node node-id)
+       node-id]))
+  :destroy (fn [{::keys [node]}]
+             (swap! *updates* conj! {:noria/update-type :destroy-node
+                                     :noria/node node})))
+
+(comment
+
+  (defthunk div
+    (fn [state {:keys [style child class]}]
+      [state (node :dom/div
+                   {:dom/child child
+                    :dom/style (thunk (str (deref-or-value style)))
+                    :dom/class class})]))
+
+  (defthunk text
+    (fn [state text]
+      [state (node :dom/text-node
+                   {:dom/text text})]))
+  
+  
+  
+  
+
+  (binding [*updates* (atom (transient []))
+            *graph* (atom empty-graph)
+            *parent-id* 0
+            *children* (atom (transient []))]
+    [@(div {:class ".root-div"
+            :child (div {:style {:flex "auto"}
+                         :child (div {:class ".split-view"
+                                      :child (text "hello")})})})
+     (persistent! @*updates*)
+     (def g @*graph*)])
+
+  (binding [*graph* (atom empty-graph)
+            *parent-id* 0
+            *children* (atom (transient []))]
+    @(thunk 1))
+  
+
+  (binding [*graph* (atom empty-graph)
+            *children* (atom (transient []))
+            *parent-id* 0]
+    [@(thunk (let [x (thunk 1)
+                   y (thunk 2)
+                   z (thunk 0)]
+               @(thunk (prn "calculating sum")
+                       (+ @x @y @(thunk 3)))))
+     (def G @*graph*)])
+  G
+
+  (let [GG (assoc G ::triggers (i/int-set))]
+    (binding [*graph* (atom GG)
+              *children* (atom (transient []))
+              *parent-id* 0]
+      (run GG 1 (i/int-set [4]))))
+
+
+  
+
+  
+  
+
+  
+  (macroexpand-1 
+
+   (defthunk div
+     (fn [state props]
+       [state :node])
+     :up-to-date? (fn [state props])
+     :destroy (fn [state]))
+
+   )
+
+  (macroexpand-1
+   '(div {:rpops 2}))
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
