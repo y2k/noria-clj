@@ -552,7 +552,6 @@
 
 ;;; noria-2
 
-
 (def ^:dynamic *dependencies* nil)
 (def ^:dynamic *parent-id* nil)
 (def ^:dynamic *children* nil)
@@ -686,13 +685,13 @@
     (let [args-vec (into [] args)]
       (if (= ::key (first args-vec))
         [(second args-vec) (drop 2 args-vec)]
-        [(gensym) args]))
-    [(gensym) args]))
+        [`(quote ~(gensym)) args]))
+    [`(quote ~(gensym)) args]))
 
 (defmacro thunk [& body]
   `((thunk* {:eval (fn [state#] [state# (do ~@body)])
-              :desc ~(str body)
-              :destroy identity
+             :desc ~(str body)
+             :destroy identity
              :up-to-date? (constantly false)})
     (quote ~(gensym))))
 
@@ -707,7 +706,7 @@
                   :desc '~thunk-name}))
        (defmacro ~thunk-name [& args#]
          (let [[key# args'#] (extract-key args#)]
-           (apply list (into ['~q-thunk-sym (list `quote key#)] args'#)))))))
+           (apply list (into ['~q-thunk-sym key#] args'#)))))))
 
 (defn deref-or-value [thunk-or-value]
   (if (instance? Thunk thunk-or-value)
@@ -772,19 +771,35 @@
   
   
   
-  
+  (defthunk my-ui
+    (fn [state]
+      [state (div {:class ".root-div"
+                   :child (div {:style {:flex "auto"}
+                                :child (div {:class ".split-view"
+                                             :child (text "hello")})})})]))
 
   (binding [*updates* (atom (transient []))
             *graph* (atom empty-graph)
             *parent-id* 0
             *children* (atom (transient []))]
-    [@(div {:class ".root-div"
-            :child (div {:style {:flex "auto"}
-                         :child (div {:class ".split-view"
-                                      :child (text "hello")})})})
+    [@(my-ui ::key 1)
      (persistent! @*updates*)
      (def g @*graph*)])
 
+  (defn fff []
+    (do (let [gg (assoc g ::triggers (i/int-set))]
+          (binding [*graph* (atom gg)
+                    *updates* (atom (transient []))
+                    *children* (atom (transient []))
+                    *parent-id* 0]
+            [(run gg 1 (i/int-set [1 2 3 4 5]))
+             (persistent! @*updates*)]))
+        nil))
+
+  (time
+   (fff))
+
+  
   (binding [*graph* (atom empty-graph)
             *parent-id* 0
             *children* (atom (transient []))]
@@ -802,11 +817,7 @@
      (def G @*graph*)])
   G
 
-  (let [GG (assoc G ::triggers (i/int-set))]
-    (binding [*graph* (atom GG)
-              *children* (atom (transient []))
-              *parent-id* 0]
-      (run GG 1 (i/int-set [4]))))
+  
 
 
   
@@ -828,18 +839,6 @@
   (macroexpand-1
    '(div {:rpops 2}))
 )
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
