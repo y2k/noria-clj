@@ -12,8 +12,7 @@
 
   But we need a place to stop change propagation. Change is a value. So we must compare output"
   (:require [clojure.pprint :as pprint]
-            [clojure.data.int-map :as i]
-            [clojure.spec.alpha :as s]))
+            [clojure.data.int-map :as i]))
 
 (defprotocol ThunkDef
   (destroy! [this state destroy-children!])
@@ -54,13 +53,8 @@
                  children-by-keys
                  children])
 
-(def graph-0 {::values (i/int-map)
-              ::triggers (i/int-set)
-              ::up-to-date (i/int-set)
-              ::max-thunk-id 0})
-
 (def ^:dynamic *dependencies* nil)
-(def ^:dynamic *parent-id* nil)
+(def ^:dynamic *flashbacks* nil)
 (def ^:dynamic *children* nil)
 (def ^:dynamic *graph* nil)
 
@@ -86,10 +80,6 @@
 
 (defmethod pprint/simple-dispatch Thunk [s]
   (pr s))
-
-(defn recall [graph parent-id key]
-  (when-let [^Calc parent (get (::values graph) parent-id)]
-    (get (.-children-by-keys parent) key)))
 
 (defn gc [graph ids]
   (let [destroy (fn destroy [id]
@@ -129,7 +119,8 @@
         (update graph ::up-to-date conj id)        
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
-                        *parent-id* id
+                        *flashbacks* (when calc
+                                       (.-children-by-keys calc))
                         *dependencies* (atom (transient (i/int-set)))
                         *children* (atom (transient []))]
                 (let [[state value] (compute thunk-def (if calc (.-state calc) {:noria/id id}) args)]
@@ -150,72 +141,56 @@
                            (with-thunks-forbidden changed? thunk-def (.-value calc) value'))
                 (update ::triggers conj id))))))))
 
-(defn reconcile-thunk [graph parent-id thunk-def key args]
-  (if-let [id (recall graph parent-id key)]
+(defn reconcile-thunk [graph flashbacks thunk-def key args]
+  (if-let [id (when flashbacks
+                (get flashbacks key))]
     [id (reconcile-by-id graph id thunk-def key args)]
     (let [graph' (update graph ::max-thunk-id inc)
           id (::max-thunk-id graph')]
       [id (reconcile-by-id graph' id thunk-def key args)])))
 
-(defn reconcile-self [graph id ^Calc c]
-  (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c)))
-
-(defn run [graph id dirty-set]
-  (let [^Calc c (get (::values graph) id)]
-    (if (or (contains? dirty-set id)
-            (some #(contains? (::triggers graph) %) (.-deps c)))
-      (reduce (fn [g id]
-                (run g id dirty-set))
-              (reconcile-self graph id c)
-              (.-children c))
-      (reduce (fn [g c-id]
-                (let [g' (run g c-id dirty-set)]
-                  (if (some #(contains? (::triggers g') %) (.-deps c))
-                    (reduced (run g' id dirty-set))
-                    g')))
-              graph
-              (.-children c)))))
-
-(defn thunk* [key thunk-def args]
-  (let [[id graph'] (reconcile-thunk @*graph* *parent-id* thunk-def key args)]
+(defn thunk* [key thunk-def args-vector]
+  (let [[id graph'] (reconcile-thunk @*graph* *flashbacks* thunk-def key args-vector)]
     (reset! *graph* graph')
     (swap! *children* conj! [key id])
     (Thunk. id)))
-
-(s/def ::-< (s/cat :key-spec (s/? (s/cat :kw #{:noria/key}
-                                         :key any?))
-                   :thunk-def any?
-                   :args (s/* any?)))
-
-(defmacro -< [& stuff]
-  (when-not (s/valid? ::-< stuff)
-    (throw (ex-info (s/explain-str ::-< stuff)
-                    (s/explain-data ::-< stuff))))
-  (let [{{key :key} :key-spec
-         :keys [thunk-def args]} (s/conform ::-< stuff) 
-        key (or key `(quote ~(gensym)))]
-    `(thunk* ~key ~thunk-def [~@args])))
 
 (defn deref-or-value [thunk-or-value]
   (if (instance? Thunk thunk-or-value)
     (deref thunk-or-value)
     thunk-or-value))
 
-(defn init-computation [f args]
-  (binding [*graph* (atom graph-0)
-            *parent-id* 0
-            *dependencies* (atom (transient (i/int-set)))
-            *children* (atom (transient []))]
-    (let [^Thunk t (thunk* 0 f args)
-          graph' (assoc @*graph* ::root (.-id t))]
-      [graph'  (deref-or-value t)])))
+(defn traverse-graph [graph id dirty-set]
+  (let [^Calc c (get (::values graph) id)]
+    (if (or (contains? dirty-set id)
+            (some #(contains? (::triggers graph) %) (.-deps c)))
+      (reduce (fn [g id]
+                (traverse-graph g id dirty-set))
+              (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
+              (.-children c))
+      (reduce (fn [g c-id]
+                (let [g' (traverse-graph g c-id dirty-set)]
+                  (if (some #(contains? (::triggers g') %) (.-deps c))
+                    (reduced (traverse-graph g' id dirty-set))
+                    g')))
+              graph
+              (.-children c)))))
 
-(defn update-computation [graph dirty-set args]
-  (binding [*graph* (atom (assoc graph
-                                 ::triggers (i/int-set)
-                                 ::up-to-date (i/int-set)))
-            *parent-id* 0
-            *dependencies* (atom (transient (i/int-set)))
-            *children* (atom (transient []))]
-    (let [g' (run graph (::root graph) dirty-set)]
-      [g' @(Thunk. (::root graph))])))
+(def graph-0 {::values (i/int-map)
+              ::max-thunk-id 0})
+
+(defn evaluate [graph f args-vector & {:keys [dirty-set]}]
+  (let [first-run? (nil? (::root graph))
+        [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
+                                                ::triggers (i/int-set)
+                                                ::up-to-date (i/int-set))
+                                          (when-let [root-id (::root graph)]
+                                            {::root root-id})
+                                          f ::root args-vector)
+        graph (-> graph
+                  (assoc ::root root-id)
+                  (cond-> (not first-run?)
+                    (traverse-graph root-id dirty-set))
+                  (dissoc ::triggers
+                          ::up-to-date))]
+    [graph (.-value ^Calc (get-in graph [::values root-id]))]))

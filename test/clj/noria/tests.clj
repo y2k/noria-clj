@@ -1,10 +1,105 @@
 (ns noria.tests
   (:require [noria :refer :all]
-            [clojure.test :refer :all]
-            [noria.components :refer :all]))
+            [clojure.test :refer :all]))
 
 (defattr :dom/children {:noria/data-type :nodes-seq})
 (defattr :dom/child {:noria/data-type :node})
+
+(defn check-updates-match-args
+  "Sequence of [args-vector expected-updates]"
+  [root-function args-to-updates]
+  (reduce (fn [graph [keyseq expected-updates]]
+            (let [[graph' updates] (evaluate graph root-function keyseq)]
+              (is (= updates expected-updates))
+              graph'))
+          nil
+          args-to-updates))
+
+(defn sequence [& keys]
+  (-< node :div
+      {:dom/children (into []
+                           (map (fn [key]
+                                  (-< :noria/key key
+                                      node :label {:dom/text key})))
+                           keys)}))
+
+(deftest reconcile-seq
+  (check-updates-match-args
+   sequence
+   [[["hey" "hoy"]
+             [#:noria{:update-type :make-node, :node 1, :type :label, :constructor-parameters {}}
+              #:noria{:update-type :set-attr, :attr :dom/text, :node 1, :value "hey"}
+              #:noria{:update-type :make-node, :node 2, :type :label, :constructor-parameters {}}
+              #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy"}
+              #:noria{:update-type :make-node, :node 3, :type :div, :constructor-parameters {}}
+              #:noria{:update-type :add, :attr :dom/children, :node 3, :value 1, :index 0}
+              #:noria{:update-type :add, :attr :dom/children, :node 3, :value 2, :index 1}]]
+
+           [["hey" "hoy"]
+            []]
+
+           [["first" "second" "third"]
+            [#:noria{:update-type :make-node, :type :label, :node 4, :constructor-parameters {}}
+             #:noria{:update-type :set-attr, :value "first", :node 4, :attr :dom/text}
+             #:noria{:update-type :make-node, :type :label, :node 5, :constructor-parameters {}}
+             #:noria{:update-type :set-attr, :value "second", :node 5, :attr :dom/text}
+             #:noria{:update-type :make-node, :type :label, :node 6, :constructor-parameters {}}
+             #:noria{:update-type :set-attr, :value "third", :node 6, :attr :dom/text}
+             #:noria{:update-type :remove, :attr :dom/children, :node 3, :value 1}
+             #:noria{:update-type :remove, :attr :dom/children, :node 3, :value 2}
+             #:noria{:update-type :add, :attr :dom/children, :node 3, :value 4, :index 0}
+             #:noria{:update-type :add, :attr :dom/children, :node 3, :value 5, :index 1}
+             #:noria{:update-type :add, :attr :dom/children, :node 3, :value 6, :index 2}
+             #:noria{:update-type :destroy, :node 1}
+             #:noria{:update-type :destroy, :node 2}]]
+
+           [["second" "first" "third"]
+            [#:noria{:update-type :remove, :attr :dom/children, :node 3, :value 5}
+             #:noria{:update-type :add, :attr :dom/children, :node 3, :value 5, :index 0}]]]))
+
+(defn unordered-sequence [& keys]
+  (-< node :div
+      {:dom/children (with-meta
+                       (into []
+                             (map (fn [key]
+                                    (-< :noria/key key
+                                        node :label {:dom/text key})))
+                             keys)
+                       {:noria/unordered? true})}))
+
+(deftest reconcile-unordered
+  (check-updates-match-args
+   unordered-sequence
+   [[["hey" "hoy"]
+     [#:noria{:update-type :make-node, :type :label, :node 1, :constructor-parameters {}}
+      #:noria{:update-type :set-attr, :value "hey", :node 1, :attr :dom/text}
+      #:noria{:update-type :make-node, :type :label, :node 2, :constructor-parameters {}}
+      #:noria{:update-type :set-attr, :value "hoy", :node 2, :attr :dom/text}
+      #:noria{:update-type :make-node, :type :div, :node 3, :constructor-parameters {}}
+      #:noria{:update-type :add, :attr :dom/children, :node 3, :value 1, :index 0}
+      #:noria{:update-type :add, :attr :dom/children, :node 3, :value 2, :index 1}]]
+
+    [["hey" "hoy"]
+     []]
+
+    [["hoy" "hey"]
+     []]
+
+    [["oh" "hey"]
+     [#:noria{:update-type :make-node, :type :label, :node 4, :constructor-parameters {}}
+      #:noria{:update-type :set-attr, :value "oh", :node 4, :attr :dom/text}
+      #:noria{:update-type :remove, :attr :dom/children, :node 3, :value 2}
+      #:noria{:update-type :add, :attr :dom/children, :node 3, :value 4, :index 1}
+      #:noria{:update-type :destroy, :node 2}]]]))
+
+
+
+
+
+
+
+
+
 
 (defn check-updates [elements]
   (reduce (fn [[old-value ctx] [el updates]]
@@ -13,62 +108,6 @@
               [new-value (dissoc ctx' :updates)]))
           [nil context-0] elements))
 
-(deftest reconcile-seq
-  (check-updates
-   [[{:noria/type :div
-      :dom/children
-      [{:noria/type :hey
-        :noria/key :hey
-        :dom/text "hey"}
-       {:noria/type :hoy
-        :noria/key :hoy
-        :dom/text "hoy"}]}
-     [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
-      #:noria{:update-type :make-node, :node 1, :type :hey, :constructor-parameters {}}
-      #:noria{:update-type :set-attr, :attr :dom/text, :node 1, :value "hey"}
-      #:noria{:update-type :make-node, :node 2, :type :hoy, :constructor-parameters {}}
-      #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy"}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
-    [{:noria/type :div
-      :dom/children
-      [{:noria/type :hey
-        :noria/key :hey
-        :dom/text "hey"}
-       {:noria/type :hoy
-        :noria/key :hoy
-        :dom/text "hoy"}]} []]
-    [{:noria/type :div
-      :dom/children [{:noria/type :hiy
-                      :noria/key :hiy
-                      :dom/text "hiy"}
-                     {:noria/type :hoy
-                      :noria/key :hoy
-                      :dom/text "hoy!!"}
-                     {:noria/type :fu
-                      :noria/key :fu
-                      :dom/text "fu"}]}
-     [#:noria{:update-type :make-node, :node 3, :type :hiy, :constructor-parameters {}}
-      #:noria{:update-type :set-attr, :attr :dom/text, :node 3, :value "hiy"}
-      #:noria{:update-type :set-attr, :attr :dom/text, :node 2, :value "hoy!!"}
-      #:noria{:update-type :make-node, :node 4, :type :fu, :constructor-parameters {}}
-      #:noria{:update-type :set-attr, :attr :dom/text, :node 4, :value "fu"}
-      #:noria{:update-type :remove :attr :dom/children :node 0 :value 1}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 0}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 4, :index 2}
-      #:noria{:update-type :destroy, :node 1}]]
-    [{:noria/type :div
-      :dom/children [{:noria/type :hoy
-                      :noria/key :hoy
-                      :dom/text "hoy!!"}
-                     {:noria/type :hiy
-                      :noria/key :hiy
-                      :dom/text "hiy"}
-                     {:noria/type :fu
-                      :noria/key :fu
-                      :dom/text "fu"}]}
-     [#:noria{:update-type :remove, :attr :dom/children, :node 0, :value 2}
-      #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 0}]]]))
 
 (def label
   (render
@@ -385,32 +424,6 @@
                    [#:noria{:update-type :set-attr, :attr :x, :node 2, :value 4}
                     #:noria{:update-type :remove, :attr :dom/children, :node 0, :value 1}
                     #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}]]]))
-
-(deftest reconcile-unordered
-  (check-updates [[{:noria/type :div
-                    :dom/children ^:noria/unordered? [{:noria/type :hey}
-                                                      {:noria/type :hoy}]}
-                   [#:noria{:update-type :make-node, :node 0, :type :div, :constructor-parameters {}}
-                    #:noria{:update-type :make-node, :node 1, :type :hey, :constructor-parameters {}}
-                    #:noria{:update-type :make-node, :node 2, :type :hoy, :constructor-parameters {}}
-                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 1, :index 0}
-                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 2, :index 1}]]
-                  [{:noria/type :div
-                    :dom/children ^:noria/unordered?[{:noria/type :hey}
-                                                     {:noria/type :hoy}]}
-                   []]
-                  [{:noria/type :div
-                    :dom/children ^:noria/unordered?[{:noria/type :hoy}
-                                                     {:noria/type :hiy}]}
-                   [#:noria{:update-type :make-node, :node 3, :type :hiy, :constructor-parameters {}}
-                    #:noria{:update-type :remove :attr :dom/children :node 0 :value 1}
-                    #:noria{:update-type :add, :attr :dom/children, :node 0, :value 3, :index 1}
-                    #:noria{:update-type :destroy, :node 1}]]
-                  [{:noria/type :div
-                    :dom/children ^:noria/unordered?[{:noria/type :hoy
-                                                      :hoy/x 1}
-                                                     {:noria/type :hiy}]}
-                   [#:noria{:update-type :set-attr, :attr :hoy/x, :node 2, :value 1}]]]))
 
 (def type-comp
   (render

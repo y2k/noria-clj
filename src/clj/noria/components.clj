@@ -92,20 +92,3 @@
       ([] (r-f))
       ([state inputs] (r-f state inputs))
       ([state] (f (r-f state))))))
-
-(defn specialize
-  ([key-fn] (specialize key-fn false))
-  ([key-fn save?]
-   (fn [r-f]
-     (fn
-       ([] (r-f))
-       ([state args]
-        (let [key (apply key-fn args)
-              state* (get-in state [::special-states key])
-              state*' (r-f (assoc state* :noria/id-path (:noria/id-path state)) args)]
-          (-> state
-              (merge state*')
-              (cond->
-                  (not save?) (assoc ::special-states {}))
-              (assoc-in [::special-states key] state*'))))
-       ([state] (r-f state))))))
