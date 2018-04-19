@@ -1,6 +1,8 @@
 (ns noria
-  (:require [clojure.data.int-map :as i])
-  (:import [noria LCS]))
+  (:require [clojure.data.int-map :as i]
+            [noria.thunks :as t :refer [defthunk thunk]])
+  (:import [noria LCS]
+           [noria.thunks Thunk]))
 
 (defn get-key [x]
   (if (vector? x)
@@ -132,62 +134,57 @@
 (defn supply [ctx u]
   (update ctx :updates conj! u))
 
-(defn update-order [parent-node attr old-nodes new-nodes ctx]
+(defn update-order [parent-node attr old-nodes new-nodes]
   (if (= old-nodes new-nodes)
-    ctx
+    nil
     (let [moved? (complement (into (i/int-set) (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
-          old-nodes-set (i/int-set old-nodes)
-          removes (into []
-                        (keep
-                         (fn [node]
-                           (when (and (moved? node) (contains? old-nodes-set node))
-                             {::update-type :remove
-                              ::attr attr
-                              ::node parent-node
-                              ::value node})))
-                        old-nodes)
-          adds (into []
-                     (comp
-                      (map-indexed
-                       (fn [i node]
-                         (when (moved? node)
-                           {::update-type :add
-                            ::attr attr
-                            ::node parent-node
-                            ::value node
-                            ::index i})))
-                      (filter some?))
-                     new-nodes)]      
-      (as-> ctx <>
-        (reduce supply <> removes)
-        (reduce supply <> adds)))))
+          old-nodes-set (i/int-set old-nodes)]
+      (-> []
+          (into
+           (keep
+            (fn [node]
+              (when (and (moved? node) (contains? old-nodes-set node))
+                {::update-type :remove
+                 ::attr attr
+                 ::node parent-node
+                 ::value node})))
+           old-nodes)
+          (into (comp
+                 (map-indexed
+                  (fn [i node]
+                    (when (moved? node)
+                      {::update-type :add
+                       ::attr attr
+                       ::node parent-node
+                       ::value node
+                       ::index i})))
+                 (filter some?))
+                new-nodes)))))
 
-(defn update-set [parent-node attr old-nodes new-nodes ctx]
+(defn update-set [parent-node attr old-nodes new-nodes]
   (if (= old-nodes new-nodes)
-    ctx
+    nil
     (let [to-add (i/difference new-nodes old-nodes)
           to-remove (i/difference old-nodes new-nodes)
-          removes (into []
-                        (map
-                         (fn [node]
-                           {::update-type :remove
-                            ::attr attr
-                            ::node parent-node
-                            ::value node}))
-                        to-remove)
-          idx (count (i/intersection new-nodes old-nodes))
-          adds (into []
-                     (map-indexed
-                      (fn [i node]
-                        {::update-type :add
-                         ::attr attr
-                         ::node parent-node
-                         ::value node
-                         ::index (+ idx i)}))
-                     to-add)]
-      (as-> ctx <>
-        (reduce supply <> removes)
-        (reduce supply <> adds)))))
+          idx (count (i/intersection new-nodes old-nodes))]
+      (-> []
+          (into 
+           (map
+            (fn [node]
+              {::update-type :remove
+               ::attr attr
+               ::node parent-node
+               ::value node}))
+           to-remove)
+          (into
+           (map-indexed
+            (fn [i node]
+              {::update-type :add
+               ::attr attr
+               ::node parent-node
+               ::value node
+               ::index (+ idx i)}))
+           to-add)))))
 
 (defn reconcile-by-keys [ppath old-values new-exprs env ctx]
   (let [hs-conj! (fn [^java.util.HashSet hs v] (.add hs v) hs)
@@ -232,21 +229,21 @@
                                       ctx'
                                       (.entrySet old-values-by-keys))]))
 
-
+(defn unordered? [new-exprs]
+  (::unordered? (meta new-exprs)))
 
 (defn reconcile-sequence [ppath parent-node attr old-values new-exprs env ctx]
   (let [[new-values ctx'] (reconcile-by-keys ppath old-values new-exprs env ctx)
-        unordered? (::unordered? (meta new-exprs))
+        unordered? (unordered? new-exprs)
         old-nodes (into (if unordered? (i/int-set) [])
                         (keep ::result)
                         old-values)
         new-nodes (into (if unordered? (i/int-set) [])
                         (keep ::result)
-                        new-values)
-        ctx'' (if unordered?
-                (update-set parent-node attr old-nodes new-nodes ctx')
-                (update-order parent-node attr old-nodes new-nodes ctx'))]
-    [new-values ctx'']))
+                        new-values)]
+    [new-values (reduce ctx' supply (if unordered?
+                                      (update-set parent-node attr old-nodes new-nodes)
+                                      (update-order parent-node attr old-nodes new-nodes)))]))
 
 (defn make-node [type constructor-data {:keys [next-node] :as ctx}]
   [next-node (-> ctx
@@ -552,293 +549,103 @@
 
 ;;; noria-2
 
-(def ^:dynamic *dependencies* nil)
-(def ^:dynamic *parent-id* nil)
-(def ^:dynamic *children* nil)
-
-(def ^:dynamic *graph* nil)
-
-(defrecord Calc [value
-                 state
-                 deps
-                 desc
-                 destroy
-                 up-to-date?
-                 eval
-                 args
-                 key
-                 children-by-keys
-                 children])
-
-(def empty-graph {::values (i/int-map)
-                  ::triggers (i/int-set)
-                  ::max-thunk-id 0})
-
-(deftype Thunk [^long id desc]
-  clojure.lang.IDeref
-  (deref [this]
-    (when *dependencies*
-      (swap! *dependencies* conj! id))
-    (assert (some? *graph*) {:error "Thunk deref outside of computation"
-                             :thunk-id id
-                             :desc desc})
-    (let [v (.-value ^Calc (get (::values @*graph*) id))]
-      (if (instance? Thunk v)
-        (deref v)
-        v)))
-  java.lang.Object
-  (toString [this]
-    (str "[Thunk#" id " " desc "]")))
-
-(defmethod print-method Thunk [o, ^java.io.Writer w]
-  (.write w ^String (str o)))
-
-(require '[clojure.pprint :as pprint])
-(defmethod pprint/simple-dispatch Thunk [s]
-  (pr s))
-
-(defn recall [graph parent-id key]
-  (when-let [^Calc parent (get (::values graph) parent-id)]
-    (get (.-children-by-keys parent) key)))
-
-(defn gc [graph ids]
-  (let [rec-ids (into (vector-of :long)
-                      (comp
-                       (map (fn [id]
-                              (tree-seq (constantly true) #(.-children ^Calc (get (::values graph) %)) id)))
-                       (mapcat reverse))
-                      ids)]
-    (update graph ::values (fn [v]
-                             (persistent!
-                              (reduce (fn [v id]
-                                        (let [^Calc c (get (::values graph) id)
-                                              d (.-destroy c)]
-                                          (d (.-state c)))
-                                        (dissoc! v id))
-                                      (transient v)
-                                      rec-ids))))))
-
-(defn reconcile-by-id [graph id {:keys [eval destroy up-to-date? desc key] :as params} args]
-  (let [^Calc calc (get (::values graph) id)]
-    (if (or (contains? (::triggers graph) id)
-            (and calc (apply up-to-date? (.-state calc) args)))
-      graph
-      (let [[graph' state' value' deps' children']
-            (binding [*graph* (atom graph)
-                      *parent-id* id
-                      *dependencies* (atom (transient (i/int-set)))
-                      *children* (atom (transient []))]
-              (let [[state value] (apply eval (when calc (.-state calc)) args)]
-                [@*graph* state value (persistent! @*dependencies*) (persistent! @*children*)]))]
-        (-> graph'
-            (cond-> calc
-              (gc (i/difference (i/int-set (.-children calc))
-                                (into (i/int-set)
-                                      (map second)
-                                      children'))))
-            (assoc-in [::values id]
-                      (Calc. value' state' deps' desc destroy up-to-date? eval args key
-                             (into {} children')
-                             (into (vector-of :long) (map second) children')))
-            (update ::triggers conj id))))))
-
-(defn reconcile-thunk [graph parent-id {:keys [eval destroy up-to-date? desc key] :as params} args]
-  (if-let [id (recall graph parent-id key)]
-    [id (reconcile-by-id graph id params args)]
-    (let [graph' (update graph ::max-thunk-id inc)
-          id (::max-thunk-id graph')]
-      [id (reconcile-by-id graph' id params args)])))
-
-(defn reconcile-self [graph id ^Calc c]
-  (reconcile-by-id graph id {:eval (.-eval c)
-                             :destroy (.-destroy c)
-                             :up-to-date? (.-up-to-date? c)
-                             :desc (.-desc c)
-                             :key (.-key c)} (.-args c)))
-
-(defn run [graph id dirty-set]
-  (let [^Calc c (get (::values graph) id)]
-    (if (or (contains? dirty-set id)
-            (some #(contains? (::triggers graph) %) (.-deps c)))
-      (reduce (fn [g id]
-                (run g id dirty-set))
-              (reconcile-self graph id c)
-              (.-children c))
-      (reduce (fn [g c-id]
-                (let [g' (run g c-id dirty-set)]
-                  (if (some #(contains? (::triggers g') %) (.-deps c))
-                    (reduced (run g' id dirty-set))
-                    g')))
-              graph
-              (.-children c)))))
-
-(defn thunk* [{:keys [eval up-to-date? desc] :as params}]
-  (fn [key & args]
-    (let [[id graph'] (reconcile-thunk @*graph* *parent-id* (assoc params
-                                                                   :key key) args)]
-      (reset! *graph* graph')
-      (swap! *children* conj! [key id])
-      (Thunk. id desc))))
-
-(defn extract-key [args]
-  (if (<= 2 (count args))
-    (let [args-vec (into [] args)]
-      (if (= ::key (first args-vec))
-        [(second args-vec) (drop 2 args-vec)]
-        [`(quote ~(gensym)) args]))
-    [`(quote ~(gensym)) args]))
-
-(defmacro thunk [& body]
-  `((thunk* {:eval (fn [state#] [state# (do ~@body)])
-             :desc ~(str body)
-             :destroy identity
-             :up-to-date? (constantly false)})
-    (quote ~(gensym))))
-
-(defmacro defthunk [thunk-name eval-fn & {:keys [up-to-date? destroy]}]
-  (let [thunk-sym (symbol (str (name thunk-name) "-thunk"))
-        q-thunk-sym (symbol (name (ns-name *ns*)) (name thunk-sym))]
-    `(do
-       (def ~thunk-sym
-         (thunk* {:eval ~eval-fn
-                  :up-to-date? ~(or up-to-date? `(constantly false))
-                  :destroy ~(or destroy `identity)
-                  :desc '~thunk-name}))
-       (defmacro ~thunk-name [& args#]
-         (let [[key# args'#] (extract-key args#)]
-           (apply list (into ['~q-thunk-sym key#] args'#)))))))
-
-(defn deref-or-value [thunk-or-value]
-  (if (instance? Thunk thunk-or-value)
-    (deref thunk-or-value)
-    thunk-or-value))
-
 (def ^:dynamic *updates* nil)
-(def *next-node (atom 0))
+(def ^:dynamic *next-node* nil)
+(def ^:dynamic *callbacks* nil)
 
-(defthunk attr
-  (fn [state node attr value]
-    (swap! *updates* conj! {:noria/update-type :set-attr
-                            :noria/value (deref-or-value value)
-                            :noria/node node
-                            :noria/attr attr})
-    [(assoc state
-            ::value (deref-or-value value)
-            ::node node
-            ::attr attr)])
-  :up-to-date? (fn [state node attr value] (= (deref-or-value value) (::value state)))
-  :destroy (fn [{::keys [node attr]}]
-             (swap! *updates* conj! {:noria/update-type :set-attr
-                                     :noria/value nil
-                                     :noria/node node
-                                     :noria/attr attr})))
+(def node
+  (t/thunk-def
+   {:up-to-date? (constantly false)
+    :compute
+    (fn [state [type attrs]]
+      (let [old-type (::type state)
+            old-node (::node state)
+            constructor-params (get-constructor-parameters type)
+            node-id (if (= old-type type)
+                      old-node
+                      (let [node-id (swap! *next-node* inc)]
+                        (when old-node
+                          (swap! *updates* conj! {:noria/update-type :destroy
+                                                  :noria/node old-node}))
+                        (swap! *updates* conj! {:noria/update-type :make-node
+                                                :noria/type type
+                                                :noria/node node-id
+                                                :noria/constructor-parameters (select-keys attrs constructor-params)})
+                        node-id))]
+        [(transduce
+          (if (not= old-node node-id)
+            (remove (comp constructor-params first))
+            identity)
+          (completing
+           (fn [state [attr value]]
+             (let [old-value (get state attr)
+                   data-type (get-data-type attr)
+                   new-value (t/deref-or-value value)]
+               (case data-type
+                 (:node :simple-value)
+                 (if (not= old-value new-value)
+                   (do
+                     (swap! *updates* conj! {:noria/update-type :set-attr
+                                             :noria/value new-value
+                                             :noria/node node-id
+                                             :noria/attr attr})
+                     (assoc! state attr new-value))
+                   state)
+                
+                 :callback
+                 (do
+                   (swap! *callbacks* assoc! [node-id attr] new-value)
+                   (cond
+                     (and (nil? old-value) (nil? new-value)) state
+                     (some? new-value) (do
+                                         (swap! *updates* conj! {:noria/update-type :set-attr
+                                                                 :noria/node node-id
+                                                                 :noria/attr attr
+                                                                 :noria/value (if (:noria/sync (meta new-value))
+                                                                                :noria-handler-sync
+                                                                                :noria-handler-async)})
+                                         (assoc! state attr new-value))
+                     (nil? new-value) (do
+                                        (swap! *updates* conj! {:noria/update-type :set-attr
+                                                                :noria/node node-id
+                                                                :noria/attr attr
+                                                                :noria/value :-noria-handler})
+                                        (dissoc! state attr))
+                     :else state))
+                 :nodes-seq (let [new-nodes (into [] (map t/deref-or-value) new-value)
+                                  old-nodes old-value
+                                  updates (if (unordered? new-value)
+                                            (update-set node-id attr old-nodes new-nodes)
+                                            (update-order node-id attr old-nodes new-nodes))]
+                              (swap! *updates* (fn [u] (reduce conj! u updates)))
+                              (assoc! state attr new-nodes)))))
+           persistent!)
+          (transient (assoc state
+                            ::type type
+                            ::node node-id))
+          attrs) node-id]))
+    :destroy! (fn [{::keys [node] :as state} destroy-children!]
+                (doseq [[attr value] state]
+                  (case (get-data-type attr)
+                    :node (swap! *updates* conj! {:noria/update-type :set-attr
+                                                  :noria/node node
+                                                  :noria/attr attr
+                                                  :noria/value nil})
+                    :node-seq (doseq [n value]
+                                (swap! *updates* conj! {:noria/update-type :remove
+                                                        :noria/node node
+                                                        :noria/attr attr
+                                                        :noria/value n}))
+                    nil))
+                (swap! *updates* conj! {:noria/update-type :destroy
+                                        :noria/node node}))}))
 
-(defthunk node
-  (fn [state type attrs]
-    (let [old-type (::type state)
-          old-node (::node state)
-          node-id (if (= old-type type)
-                    old-node
-                    (let [node-id (swap! *next-node inc)]
-                      (swap! *updates* conj! {:noria/update-type :make-node
-                                              :noria/type type
-                                              :noria/node node-id})
-                      node-id))]
-      (doseq [[k v] attrs]
-        (when v
-          (attr ::key k node-id k v)))
-      [(assoc state
-              ::type type
-              ::node node-id)
-       node-id]))
-  :destroy (fn [{::keys [node]}]
-             (swap! *updates* conj! {:noria/update-type :destroy-node
-                                     :noria/node node})))
+(def state-0
+  {::next-node 0})
 
-(comment
-
-  (defthunk div
-    (fn [state {:keys [style child class]}]
-      [state (node :dom/div
-                   {:dom/child child
-                    :dom/style (thunk (str (deref-or-value style)))
-                    :dom/class class})]))
-
-  (defthunk text
-    (fn [state text]
-      [state (node :dom/text-node
-                   {:dom/text text})]))
-  
-  
-  
-  (defthunk my-ui
-    (fn [state]
-      [state (div {:class ".root-div"
-                   :child (div {:style {:flex "auto"}
-                                :child (div {:class ".split-view"
-                                             :child (text "hello")})})})]))
-
+(defn evaluate [{::keys [next-node]} render-fn]
   (binding [*updates* (atom (transient []))
-            *graph* (atom empty-graph)
-            *parent-id* 0
-            *children* (atom (transient []))]
-    [@(my-ui ::key 1)
-     (persistent! @*updates*)
-     (def g @*graph*)])
-
-  (defn fff []
-    (do (let [gg (assoc g ::triggers (i/int-set))]
-          (binding [*graph* (atom gg)
-                    *updates* (atom (transient []))
-                    *children* (atom (transient []))
-                    *parent-id* 0]
-            [(run gg 1 (i/int-set [1 2 3 4 5]))
-             (persistent! @*updates*)]))
-        nil))
-
-  (time
-   (fff))
-
-  
-  (binding [*graph* (atom empty-graph)
-            *parent-id* 0
-            *children* (atom (transient []))]
-    @(thunk 1))
-  
-
-  (binding [*graph* (atom empty-graph)
-            *children* (atom (transient []))
-            *parent-id* 0]
-    [@(thunk (let [x (thunk 1)
-                   y (thunk 2)
-                   z (thunk 0)]
-               @(thunk (prn "calculating sum")
-                       (+ @x @y @(thunk 3)))))
-     (def G @*graph*)])
-  G
-
-  
-
-
-  
-
-  
-  
-
-  
-  (macroexpand-1 
-
-   (defthunk div
-     (fn [state props]
-       [state :node])
-     :up-to-date? (fn [state props])
-     :destroy (fn [state]))
-
-   )
-
-  (macroexpand-1
-   '(div {:rpops 2}))
-)
-
-
-
+            *next-node* (atom next-node)]
+    (let [^Thunk root-thunk (t/) (render-fn)]
+      [{::next-node @*next-node*
+        ::root (.-id root-thunk)} (persistent! @*updates*)])))
