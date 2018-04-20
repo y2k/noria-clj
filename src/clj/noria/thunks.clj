@@ -123,7 +123,7 @@
                                        (.-children-by-keys calc))
                         *dependencies* (atom (transient (i/int-set)))
                         *children* (atom (transient []))]
-                (let [[state value] (compute thunk-def (if calc (.-state calc) {:noria/id id}) args)]
+                (let [[state value] (compute ((::middleware graph) thunk-def) (if calc (.-state calc) {:noria/id id}) args)]
                   [@*graph* state value (persistent! @*dependencies*) (persistent! @*children*)]))]
           
           (-> graph'
@@ -179,9 +179,12 @@
 (def graph-0 {::values (i/int-map)
               ::max-thunk-id 0})
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set]}]
+(defn evaluate [graph f args-vector & {:keys [dirty-set middleware]
+                                       :or {dirty-set (i/int-set)
+                                            middleware identity}}]
   (let [first-run? (nil? (::root graph))
         [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
+                                                ::middleware middleware
                                                 ::triggers (i/int-set)
                                                 ::up-to-date (i/int-set))
                                           (when-let [root-id (::root graph)]

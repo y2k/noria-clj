@@ -727,8 +727,12 @@
                 (swap! *updates* conj! {:noria/update-type :destroy
                                         :noria/node node}))}))
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set]}]
+(defn evaluate [graph f args-vector & {:keys [dirty-set middleware]
+                                       :or {dirty-set (i/int-set)
+                                            middleware identity}}]
   (binding [*updates* (atom (transient []))
             *next-node* (atom (or (::next-node graph) 0))]
-    (let [[graph value] (t/evaluate graph f args-vector :dirty-set dirty-set)]
+    (let [[graph value] (t/evaluate graph f args-vector
+                                    :dirty-set dirty-set
+                                    :middleware middleware)]
       [(assoc graph ::next-node @*next-node*) (persistent! @*updates*)])))

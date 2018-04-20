@@ -1,6 +1,7 @@
 (ns noria.tests
   (:require [noria :refer :all]
-            [clojure.test :refer :all]))
+            [clojure.test :refer :all]
+            [noria.components :refer :all]))
 
 (defattr :dom/children {:noria/data-type :nodes-seq})
 (defattr :dom/child {:noria/data-type :node})
