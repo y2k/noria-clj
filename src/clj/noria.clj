@@ -250,11 +250,11 @@
 
 (defn make-node [type constructor-data {:keys [next-node] :as ctx}]
   [next-node (-> ctx
-               (update :next-node inc)
-               (supply {::update-type :make-node
-                        ::node next-node
-                        ::type type
-                        ::constructor-parameters constructor-data}))])
+                 (update :next-node inc)
+                 (supply {::update-type :make-node
+                          ::node next-node
+                          ::type type
+                          ::constructor-parameters constructor-data}))])
 
 (defn set-attr [node attr value ctx]  
   (supply ctx {::update-type :set-attr
@@ -430,7 +430,7 @@
   (transduce
    (comp (distinct)
          (map (fn [g] {::update-type :destroy
-                       ::node g})))
+                      ::node g})))
    (completing supply)
    (dissoc ctx :garbage)
    (persistent! (:garbage ctx))))
@@ -523,10 +523,10 @@
               [args-reconciled ctx']
               (throw (ex-info "not implemented"))
               #_(reconcile* ppath
-                          args-reconciled
-                          (::expr args-reconciled)
-                          (::env args-reconciled)
-                          ctx'))))
+                            args-reconciled
+                            (::expr args-reconciled)
+                            (::env args-reconciled)
+                            ctx'))))
         (do? expr)
         (update-with-ctx old-value ::children
                          (fn [old-children ctx]
@@ -581,74 +581,138 @@
       (let [old-type (::type state)
             old-node (::node state)
             constructor-params (get-constructor-parameters type)
+            reduce-keys-of-two-maps (fn [r-f state m1 m2]
+                                      (as-> state <>
+                                        (reduce-kv (fn [state a v]
+                                                     (r-f state a v (get m2 a)))
+                                                   <> m1)
+                                        (reduce-kv (fn [state a v]
+                                                     (if (contains? m1 a)
+                                                       state
+                                                       (r-f state a nil v)))
+                                                   <> m2)))
             node-id (if (= old-type type)
                       old-node
                       (let [node-id (swap! *next-node* inc)]
                         (when old-node
                           (swap! *updates* conj! {:noria/update-type :destroy
-                                                  :noria/node old-node}))
-                        (swap! *updates* conj! {:noria/update-type :make-node
-                                                :noria/type type
-                                                :noria/node node-id
-                                                :noria/constructor-parameters (select-keys attrs constructor-params)})
-                        node-id))]
-        [(transduce
-          (if (not= old-node node-id)
-            (remove (comp constructor-params first))
-            identity)
-          (completing
-           (fn [state [attr value]]
-             (let [old-value (get state attr)
-                   data-type (get-data-type attr)
-                   new-value (t/deref-or-value value)]
-               (case data-type
-                 (:node :simple-value)
-                 (if (not= old-value new-value)
-                   (do
-                     (swap! *updates* conj! {:noria/update-type :set-attr
-                                             :noria/value new-value
-                                             :noria/node node-id
-                                             :noria/attr attr})
-                     (assoc! state attr new-value))
-                   state)
-                
-                 :callback
-                 (do
-                   (swap! *callbacks* assoc! [node-id attr] new-value)
-                   (cond
-                     (and (nil? old-value) (nil? new-value)) state
-                     (some? new-value) (do
-                                         (swap! *updates* conj! {:noria/update-type :set-attr
-                                                                 :noria/node node-id
-                                                                 :noria/attr attr
-                                                                 :noria/value (if (:noria/sync (meta new-value))
-                                                                                :noria-handler-sync
-                                                                                :noria-handler-async)})
-                                         (assoc! state attr new-value))
-                     (nil? new-value) (do
-                                        (swap! *updates* conj! {:noria/update-type :set-attr
-                                                                :noria/node node-id
-                                                                :noria/attr attr
-                                                                :noria/value :-noria-handler})
-                                        (dissoc! state attr))
-                     :else state))
-                 :nodes-seq (let [unordered? (unordered? new-value)
-                                  new-nodes (into (if unordered? (i/int-set) [])
-                                                  (map t/deref-or-value)
-                                                  new-value)
-                                  old-nodes (or old-value (if unordered? (i/int-set) []))
-                                  updates (if unordered?
-                                            (update-set node-id attr old-nodes new-nodes)
-                                            (update-order node-id attr old-nodes new-nodes))]
-                              (swap! *updates* (fn [u] (reduce conj! u updates)))
-                              (assoc! state attr new-nodes)))))
-           persistent!)
-          (transient (assoc state
-                            ::type type
-                            ::node node-id))
-          attrs) node-id]))
-    :destroy! (fn [{::keys [node] :as state} destroy-children!]
-                (doseq [[attr value] state]
+                                                  :noria/node old-node}))                        
+                        node-id))
+            attrs'
+            (if (= old-node node-id)
+              (persistent!
+               (reduce-keys-of-two-maps
+                (fn [state attr old-value new-value]
+                  (let [new-value (t/deref-or-value new-value)
+                        data-type (get-data-type attr)]
+                    (case data-type
+                      (:node :simple-value)
+                      (if (not= old-value new-value)
+                        (do
+                          (swap! *updates* conj! {:noria/update-type :set-attr
+                                                  :noria/value new-value
+                                                  :noria/node node-id
+                                                  :noria/attr attr})
+                          (assoc! state attr new-value))
+                        state)
+                      
+                      :callback
+                      (do
+                        (swap! *callbacks* assoc! [node-id attr] new-value)
+                        (cond
+                          (and (nil? old-value) (nil? new-value)) state
+                          (some? new-value) (do
+                                              (swap! *updates* conj! {:noria/update-type :set-attr
+                                                                      :noria/node node-id
+                                                                      :noria/attr attr
+                                                                      :noria/value (if (:noria/sync (meta new-value))
+                                                                                     :noria-handler-sync
+                                                                                     :noria-handler-async)})
+                                              (assoc! state attr new-value))
+                          (nil? new-value) (do
+                                             (swap! *updates* conj! {:noria/update-type :set-attr
+                                                                     :noria/node node-id
+                                                                     :noria/attr attr
+                                                                     :noria/value :-noria-handler})
+                                             (dissoc! state attr))
+                          :else state))
+                      :nodes-seq (let [unordered? (unordered? new-value)
+                                       new-nodes (into (if unordered? (i/int-set) [])
+                                                       (map t/deref-or-value)
+                                                       new-value)
+                                       old-nodes (or old-value (if unordered? (i/int-set) []))
+                                       updates (if unordered?
+                                                 (update-set node-id attr old-nodes new-nodes)
+                                                 (update-order node-id attr old-nodes new-nodes))]
+                                   (swap! *updates* (fn [u] (reduce conj! u updates)))
+                                   (assoc! state attr new-nodes))))) 
+                (transient (::attrs state))
+                (::attrs state)
+                attrs))
+              (let [[attrs' constr updates]
+                    (reduce (fn [[attrs constr updates] [attr value]]
+                              (let [data-type (get-data-type attr)
+                                    new-value (t/deref-or-value value)]
+                                (case data-type
+                                  (:node :simple-value)
+                                  (if (contains? constructor-params attr)
+                                    [(assoc! attrs attr new-value) (assoc! constr attr new-value) updates]
+                                    [(assoc! attrs attr new-value)
+                                     constr
+                                     (conj! updates {:noria/update-type :set-attr
+                                                     :noria/value new-value
+                                                     :noria/node node-id
+                                                     :noria/attr attr})])
+                                  
+                                  :callback
+                                  (do
+                                    (swap! *callbacks* assoc! [node-id attr] new-value)
+                                    (let [cb (if (:noria/sync (meta new-value))
+                                               :noria-handler-sync
+                                               :noria-handler-async)]
+                                      (if (contains? constructor-params attr)
+                                        [(assoc! attrs attr cb) (assoc! constr attr cb) updates]
+                                        [(assoc! attrs attr cb)
+                                         constr
+                                         (conj! updates {:noria/update-type :set-attr
+                                                         :noria/node node-id
+                                                         :noria/attr attr
+                                                         :noria/value cb})])))
+                                  :nodes-seq
+                                  (let [new-nodes (into (if (unordered? new-value) (i/int-set) [])
+                                                        (map t/deref-or-value)
+                                                        new-value)]
+                                    (if (contains? constructor-params attr)
+                                      [(assoc! attrs attr new-nodes) (assoc! constr attr new-nodes) updates]
+                                      [(assoc! attrs attr new-nodes)
+                                       constr
+                                       (transduce
+                                        (map-indexed (fn [i e]
+                                                       {:noria/update-type :add
+                                                        :noria/node node-id
+                                                        :noria/attr attr
+                                                        :noria/value e
+                                                        :noria/index i}))
+                                        conj!
+                                        updates
+                                        new-nodes)])))))
+                            [(transient {}) (transient {}) (transient [])]
+                            attrs)]
+                (swap! *updates* (fn [u]
+                                   (reduce conj!
+                                           (conj! u
+                                                  {:noria/update-type :make-node
+                                                   :noria/type type
+                                                   :noria/node node-id
+                                                   :noria/constructor-parameters (persistent! constr)})
+                                           (persistent! updates))))
+                (persistent! attrs')))]
+        [(assoc state
+                ::attrs attrs'
+                ::type type
+                ::node node-id) node-id]))
+    :destroy! (fn [{::keys [node attrs] :as state} destroy-children!]
+                (doseq [[attr value] attrs]
                   (case (get-data-type attr)
                     :node (swap! *updates* conj! {:noria/update-type :set-attr
                                                   :noria/node node

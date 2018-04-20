@@ -185,7 +185,7 @@
                                                 ::triggers (i/int-set)
                                                 ::up-to-date (i/int-set))
                                           (when-let [root-id (::root graph)]
-                                            {::root root-id})
+                                            {::root root-id}) ;; flashbacks
                                           f ::root args-vector)
         graph (-> graph
                   (assoc ::root root-id)
