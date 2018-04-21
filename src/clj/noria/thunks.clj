@@ -109,13 +109,14 @@
     (apply f args)))
 
 (defn reconcile-by-id [graph id thunk-def key args]
-  (let [^Calc calc (get (::values graph) id)]
-    (if (contains? (::up-to-date graph) id)      
+  (let [^Calc calc (get (::values graph) id)
+        thunk-def-wrapped ((::middleware graph) thunk-def)]
+    (if (contains? (::up-to-date graph) id)
       graph
       (if (and (some? calc)
                (not (some (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
-               (with-thunks-forbidden up-to-date? thunk-def (.-state calc) (.-args calc) args))
+               (with-thunks-forbidden up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
         (update graph ::up-to-date conj id)        
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
@@ -123,7 +124,7 @@
                                        (.-children-by-keys calc))
                         *dependencies* (atom (transient (i/int-set)))
                         *children* (atom (transient []))]
-                (let [[state value] (compute ((::middleware graph) thunk-def) (if calc (.-state calc) {:noria/id id}) args)]
+                (let [[state value] (compute thunk-def-wrapped (if calc (.-state calc) {:noria/id id}) args)]
                   [@*graph* state value (persistent! @*dependencies*) (persistent! @*children*)]))]
           
           (-> graph'
@@ -138,7 +139,7 @@
                                (into (vector-of :long) (map second) children')))
               (update ::up-to-date conj id)
               (cond-> (and (some? calc)
-                           (with-thunks-forbidden changed? thunk-def (.-value calc) value'))
+                           (with-thunks-forbidden changed? thunk-def-wrapped (.-value calc) value'))
                 (update ::triggers conj id))))))))
 
 (defn reconcile-thunk [graph flashbacks thunk-def key args]

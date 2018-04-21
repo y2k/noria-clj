@@ -619,7 +619,7 @@
                       
                       :callback
                       (do
-                        (swap! *callbacks* assoc! [node-id attr] new-value)
+                        (swap! *callbacks* assoc-in [node-id (if (keyword? attr) (name attr) attr)] new-value)
                         (cond
                           (and (nil? old-value) (nil? new-value)) state
                           (some? new-value) (do
@@ -639,7 +639,7 @@
                           :else state))
                       :nodes-seq (let [unordered? (unordered? new-value)
                                        new-nodes (into (if unordered? (i/int-set) [])
-                                                       (map t/deref-or-value)
+                                                       (keep t/deref-or-value)
                                                        new-value)
                                        old-nodes (or old-value (if unordered? (i/int-set) []))
                                        updates (if unordered?
@@ -653,7 +653,7 @@
               (let [[attrs' constr updates]
                     (reduce (fn [[attrs constr updates] [attr value]]
                               (let [new-value (t/deref-or-value value)
-                                    data-type (if (fn? val)
+                                    data-type (if (fn? new-value)
                                                 :callback
                                                 (get-data-type attr))]
                                 (case data-type
@@ -669,7 +669,7 @@
                                   
                                   :callback
                                   (do
-                                    (swap! *callbacks* assoc! [node-id attr] new-value)
+                                    (swap! *callbacks* assoc-in [node-id (if (keyword? attr) (name attr) attr)] new-value)
                                     (let [cb (if (:noria/sync (meta new-value))
                                                :noria-handler-sync
                                                :noria-handler-async)]
@@ -683,7 +683,7 @@
                                                          :noria/value cb})])))
                                   :nodes-seq
                                   (let [new-nodes (into (if (unordered? new-value) (i/int-set) [])
-                                                        (map t/deref-or-value)
+                                                        (keep t/deref-or-value)
                                                         new-value)]
                                     (if (contains? constructor-params attr)
                                       [(assoc! attrs attr new-nodes) (assoc! constr attr new-nodes) updates]
@@ -735,12 +735,12 @@
                                        :or {dirty-set (i/int-set)
                                             middleware identity}}]
   (binding [*updates* (atom (transient []))
-            *callbacks* (atom (transient (or (::callbacks graph) {})))
+            *callbacks* (atom (or (::callbacks graph) {}))
             *next-node* (atom (or (::next-node graph) 0))]
     (let [[graph value] (t/evaluate graph f args-vector
                                     :dirty-set dirty-set
                                     :middleware middleware)]
       [(assoc graph
               ::next-node @*next-node*
-              ::callbacks (persistent! @*callbacks*))
+              ::callbacks @*callbacks*)
        (persistent! @*updates*)])))
