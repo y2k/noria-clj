@@ -574,10 +574,9 @@
 (def ^:dynamic *callbacks* nil)
 
 (def node
-  (t/thunk-def
-   {:up-to-date? (constantly false)
-    :compute
-    (fn [state [type attrs]]
+  (reify t/ThunkDef
+    (up-to-date? [this state old-arg new-arg] (= old-arg new-arg))
+    (compute [this state [type attrs]]
       (let [old-type (::type state)
             old-node (::node state)
             constructor-params (get-constructor-parameters type)
@@ -604,7 +603,9 @@
                (reduce-keys-of-two-maps
                 (fn [state attr old-value new-value]
                   (let [new-value (t/deref-or-value new-value)
-                        data-type (get-data-type attr)]
+                        data-type (if (or (fn? new-value) (fn? old-value))
+                                    :callback
+                                    (get-data-type attr))]
                     (case data-type
                       (:node :simple-value)
                       (if (not= old-value new-value)
@@ -651,8 +652,10 @@
                 attrs))
               (let [[attrs' constr updates]
                     (reduce (fn [[attrs constr updates] [attr value]]
-                              (let [data-type (get-data-type attr)
-                                    new-value (t/deref-or-value value)]
+                              (let [new-value (t/deref-or-value value)
+                                    data-type (if (fn? val)
+                                                :callback
+                                                (get-data-type attr))]
                                 (case data-type
                                   (:node :simple-value)
                                   (if (contains? constructor-params attr)
@@ -711,28 +714,33 @@
                 ::attrs attrs'
                 ::type type
                 ::node node-id) node-id]))
-    :destroy! (fn [{::keys [node attrs] :as state} destroy-children!]
-                (doseq [[attr value] attrs]
-                  (case (get-data-type attr)
-                    :node (swap! *updates* conj! {:noria/update-type :set-attr
-                                                  :noria/node node
-                                                  :noria/attr attr
-                                                  :noria/value nil})
-                    :node-seq (doseq [n value]
-                                (swap! *updates* conj! {:noria/update-type :remove
-                                                        :noria/node node
-                                                        :noria/attr attr
-                                                        :noria/value n}))
-                    nil))
-                (swap! *updates* conj! {:noria/update-type :destroy
-                                        :noria/node node}))}))
+    (destroy! [this {::keys [node attrs] :as state} destroy-children!]
+      (doseq [[attr value] attrs]
+        (case (get-data-type attr)
+          :node (swap! *updates* conj! {:noria/update-type :set-attr
+                                        :noria/node node
+                                        :noria/attr attr
+                                        :noria/value nil})
+          :node-seq (doseq [n value]
+                      (swap! *updates* conj! {:noria/update-type :remove
+                                              :noria/node node
+                                              :noria/attr attr
+                                              :noria/value n}))
+          nil))
+      (swap! *updates* conj! {:noria/update-type :destroy
+                              :noria/node node}))
+    (changed? [this old-value new-value] (not= old-value new-value))))
 
 (defn evaluate [graph f args-vector & {:keys [dirty-set middleware]
                                        :or {dirty-set (i/int-set)
                                             middleware identity}}]
   (binding [*updates* (atom (transient []))
+            *callbacks* (atom (transient (or (::callbacks graph) {})))
             *next-node* (atom (or (::next-node graph) 0))]
     (let [[graph value] (t/evaluate graph f args-vector
                                     :dirty-set dirty-set
                                     :middleware middleware)]
-      [(assoc graph ::next-node @*next-node*) (persistent! @*updates*)])))
+      [(assoc graph
+              ::next-node @*next-node*
+              ::callbacks (persistent! @*callbacks*))
+       (persistent! @*updates*)])))

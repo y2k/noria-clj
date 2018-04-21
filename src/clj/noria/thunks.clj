@@ -17,12 +17,12 @@
 (defprotocol ThunkDef
   (destroy! [this state destroy-children!])
   (compute [this state arg])
-  (up-to-date? [this old-arg new-arg])
+  (up-to-date? [this state old-arg new-arg])
   (changed? [this old-value new-value]))
 
 (extend-protocol ThunkDef
   clojure.lang.AFn
-  (up-to-date? [this old-arg new-arg] (= old-arg new-arg))
+  (up-to-date? [this state old-arg new-arg] (= old-arg new-arg))
   (compute [this state args]
     [state (apply this args)])
   (changed? [this old-value new-value] (not= old-value new-value))
@@ -35,7 +35,7 @@
         my-destroy! (:destroy! params (fn [state destroy-children!] (destroy-children!)))]
     (assert (some? my-compute))
     (reify ThunkDef
-      (up-to-date? [this old-arg new-arg]
+      (up-to-date? [this state old-arg new-arg]
         (my-up-to-date? old-arg new-arg))
       (compute [this state args]
         (my-compute state args))
@@ -115,7 +115,7 @@
       (if (and (some? calc)
                (not (some (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
-               (with-thunks-forbidden up-to-date? thunk-def (.-args calc) args))
+               (with-thunks-forbidden up-to-date? thunk-def (.-state calc) (.-args calc) args))
         (update graph ::up-to-date conj id)        
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
