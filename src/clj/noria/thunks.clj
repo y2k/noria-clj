@@ -87,8 +87,9 @@
                         thunk-def (.-thunk-def c)
                         children (.-children c)
                         state (.-state c)]
-                    (destroy! thunk-def state #(doseq [c children]
-                                                 (destroy c)))))]
+                    (destroy! ((::middleware graph) thunk-def)
+                              state #(doseq [c children]
+                                      (destroy c)))))]
     (doseq [id ids] (destroy id)))
 
   (update graph ::values (fn [v]
