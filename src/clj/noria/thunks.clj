@@ -167,10 +167,12 @@
   (let [^Calc c (get (::values graph) id)]
     (if (or (contains? dirty-set id)
             (some #(contains? (::triggers graph) %) (.-deps c)))
-      (reduce (fn [g id]
-                (traverse-graph g id dirty-set))
-              (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
-              (.-children c))
+      (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
+            ^Calc c' (get (::values graph') id)]
+        (reduce (fn [g id]
+                  (traverse-graph g id dirty-set))
+                graph'
+                (.-children c')))
       (reduce (fn [g c-id]
                 (let [g' (traverse-graph g c-id dirty-set)]
                   (if (some #(contains? (::triggers g') %) (.-deps c))
