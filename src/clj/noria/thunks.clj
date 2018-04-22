@@ -115,6 +115,7 @@
     (if (contains? (::up-to-date graph) id)
       graph
       (if (and (some? calc)
+               (not (contains? (::dirty-set graph) id))
                (not (some (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (with-thunks-forbidden up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
@@ -187,6 +188,7 @@
   (let [first-run? (nil? (::root graph))
         [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
                                                 ::middleware middleware
+                                                ::dirty-set dirty-set
                                                 ::triggers (i/int-set)
                                                 ::up-to-date (i/int-set))
                                           (when-let [root-id (::root graph)]
@@ -197,5 +199,6 @@
                   (cond-> (not first-run?)
                     (traverse-graph root-id dirty-set))
                   (dissoc ::triggers
+                          ::dirty-set
                           ::up-to-date))]
     [graph (.-value ^Calc (get-in graph [::values root-id]))]))

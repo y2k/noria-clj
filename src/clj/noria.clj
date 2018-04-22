@@ -621,21 +621,27 @@
                       (do
                         (swap! *callbacks* assoc-in [node-id (if (keyword? attr) (name attr) attr)] new-value)
                         (cond
-                          (and (nil? old-value) (nil? new-value)) state
-                          (some? new-value) (do
-                                              (swap! *updates* conj! {:noria/update-type :set-attr
-                                                                      :noria/node node-id
-                                                                      :noria/attr attr
-                                                                      :noria/value (if (:noria/sync (meta new-value))
-                                                                                     :noria-handler-sync
-                                                                                     :noria-handler-async)})
-                                              (assoc! state attr new-value))
-                          (nil? new-value) (do
-                                             (swap! *updates* conj! {:noria/update-type :set-attr
-                                                                     :noria/node node-id
-                                                                     :noria/attr attr
-                                                                     :noria/value :-noria-handler})
-                                             (dissoc! state attr))
+                          (and (nil? old-value) (nil? new-value))
+                          state
+
+                          (and (nil? old-value) (some? new-value))
+                          (do
+                            (swap! *updates* conj! {:noria/update-type :set-attr
+                                                    :noria/node node-id
+                                                    :noria/attr attr
+                                                    :noria/value (if (:noria/sync (meta new-value))
+                                                                   :noria-handler-sync
+                                                                   :noria-handler-async)})
+                            (assoc! state attr new-value))
+
+                          (and (some? old-value) (nil? new-value))
+                          (do
+                            (swap! *updates* conj! {:noria/update-type :set-attr
+                                                    :noria/node node-id
+                                                    :noria/attr attr
+                                                    :noria/value :-noria-handler})
+                            (dissoc! state attr))
+
                           :else state))
                       :nodes-seq (let [unordered? (unordered? new-value)
                                        new-nodes (into (if unordered? (i/int-set) [])
