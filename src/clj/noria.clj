@@ -325,7 +325,6 @@
     [(persistent! constructor-data) (persistent! component) ctx']))
 
 (defn reconcile-primitive [ppath {::keys [id] :as old-value} expr env ctx]
-  (onair.log/info :reconciling (get-type expr))
   (let [[id ctx] (alloc-id-if-needed id ctx)
         id-path (conj ppath id)]
     (if (some? old-value)
