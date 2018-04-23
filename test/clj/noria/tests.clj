@@ -24,6 +24,45 @@
                                       node :label {:dom/text key})))
                            keys)}))
 
+
+(defn split [c1 c2]
+  (let [res (-< node :split
+                {:dom/children [c1 c2]})]
+    (-< node :listener {:dom/children [res]})
+    res))
+
+(defn sidebar-comp [shown?]
+  (let [content (-< node :content {})]
+    (-< node :root
+        {:flex     "auto"
+         :dom/children [(-< node :sidebar-buttons {})
+                        (if shown?
+                          (-< split (-< node :sidebar {}) content)
+                          content)]})))
+
+
+(deftest sidebar
+  (check-updates-match-args
+    sidebar-comp
+    [[[true] [#:noria{:update-type :make-node, :type :content, :node 1, :constructor-parameters {}}
+              #:noria{:update-type :make-node, :type :sidebar-buttons, :node 2, :constructor-parameters {}}
+              #:noria{:update-type :make-node, :type :sidebar, :node 3, :constructor-parameters {}}
+              #:noria{:update-type :make-node, :type :split, :node 4, :constructor-parameters {}}
+              #:noria{:update-type :add, :node 4, :attr :dom/children, :value 3, :index 0}
+              #:noria{:update-type :add, :node 4, :attr :dom/children, :value 1, :index 1}
+              #:noria{:update-type :make-node, :type :listener, :node 5, :constructor-parameters {}}
+              #:noria{:update-type :add, :node 5, :attr :dom/children, :value 4, :index 0}
+              #:noria{:update-type :make-node, :type :root, :node 6, :constructor-parameters {}}
+              #:noria{:update-type :set-attr, :value "auto", :node 6, :attr :flex}
+              #:noria{:update-type :add, :node 6, :attr :dom/children, :value 2, :index 0}
+              #:noria{:update-type :add, :node 6, :attr :dom/children, :value 4, :index 1}]]
+     [[false] [#:noria{:update-type :remove, :attr :dom/children, :node 6, :value 4}
+               #:noria{:update-type :add, :attr :dom/children, :node 6, :value 1, :index 1}
+               #:noria{:update-type :destroy, :node 3}
+               #:noria{:update-type :destroy, :node 4}
+               #:noria{:update-type :destroy, :node 5}]]
+     ]))
+
 (deftest reconcile-seq
   (check-updates-match-args
    sequence

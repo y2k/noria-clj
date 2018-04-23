@@ -551,9 +551,10 @@
                    (update :updates persistent!))]))
 
 ;;; noria-2
+(s/def ::key-spec (s/? (s/cat :kw #{:noria/key}
+                              :key any?)))
 
-(s/def ::-< (s/cat :key-spec (s/? (s/cat :kw #{:noria/key}
-                                         :key any?))
+(s/def ::-< (s/cat :key-spec ::key-spec
                    :thunk-def any?
                    :args (s/* any?)))
 
@@ -565,6 +566,15 @@
          :keys [thunk-def args]} (s/conform ::-< stuff)
         key (or key `(quote ~(gensym)))]
     `(t/thunk* ~key ~thunk-def [~@args])))
+
+(s/def ::-<< (s/cat :key-spec ::key-spec
+                    :expr any?))
+
+(defmacro -<< [& stuff]
+  (let [{{key :key} :key-spec
+         :keys [expr]} (s/conform ::-<< stuff)
+        key (or key `(quote ~(gensym)))]
+    `(t/thunk* ~key (fn [] ~expr) [])))
 
 (def deref-or-value t/deref-or-value)
 (def thunk-def t/thunk-def)
