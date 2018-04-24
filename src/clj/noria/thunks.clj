@@ -81,6 +81,13 @@
 (defmethod pprint/simple-dispatch Thunk [s]
   (pr s))
 
+(defn descendants [g id]
+  (let [desc* (fn desc* [d g id]
+                (let [^Calc c (get (::values g) id)]
+                  (reduce (fn [d c]
+                            (-> d (conj! c) (desc* g c))) d (.-children c))))]
+    (persistent! (desc* (transient (i/int-set)) g id))))
+
 (defn gc [graph ids]
   (let [destroy (fn destroy [id]
                   (let [^Calc c (get (::values graph) id)
@@ -94,9 +101,7 @@
 
   (update graph ::values (fn [v]
                            (transduce
-                            (mapcat (fn [id]
-                                      (tree-seq (constantly true) #(.-children ^Calc (get (::values graph) %)) id)))
-                            
+                            (mapcat (fn [id] (descendants graph id)))
                             (completing (fn [v id]
                                           (dissoc! v id))
                                         persistent!)
@@ -109,6 +114,10 @@
             *children* nil]
     (apply f args)))
 
+(defn intersects? [s elts]
+  (reduce (fn [_ e]
+            (if (contains? s e) (reduced true) false)) false elts))
+
 (defn reconcile-by-id [graph id thunk-def key args]
   (let [^Calc calc (get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
@@ -116,7 +125,7 @@
       graph
       (if (and (some? calc)
                (not (contains? (::dirty-set graph) id))
-               (not (some (::triggers graph) (.-deps calc)))
+               (not (intersects? (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (with-thunks-forbidden up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
         (update graph ::up-to-date conj id)        
@@ -135,7 +144,8 @@
                                   (into (i/int-set)
                                         (map second)
                                         children'))))
-              (assoc-in [::values id]
+
+              (update ::values assoc id
                         (Calc. value' state' deps' thunk-def args key
                                (into {} children')
                                (into (vector-of :long) (map second) children')))
@@ -166,7 +176,7 @@
 (defn traverse-graph [graph id dirty-set]
   (let [^Calc c (get (::values graph) id)]
     (if (or (contains? dirty-set id)
-            (some #(contains? (::triggers graph) %) (.-deps c)))
+            (intersects? (::triggers graph) (.-deps c)))
       (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
             ^Calc c' (get (::values graph') id)]
         (reduce (fn [g id]
@@ -175,7 +185,7 @@
                 (.-children c')))
       (reduce (fn [g c-id]
                 (let [g' (traverse-graph g c-id dirty-set)]
-                  (if (some #(contains? (::triggers g') %) (.-deps c))
+                  (if (intersects? (::triggers g') (.-deps c))
                     (reduced (traverse-graph g' id dirty-set))
                     g')))
               graph
