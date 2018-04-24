@@ -114,21 +114,24 @@
             *children* nil]
     (apply f args)))
 
-(defn intersects? [s elts]
+(defn transient-contains? [^clojure.lang.ITransientSet t e]
+  (.contains t e))
+
+(defn transient-intersects? [s elts]
   (reduce (fn [_ e]
-            (if (contains? s e) (reduced true) false)) false elts))
+            (if (transient-contains? s e) (reduced true) false)) false elts))
 
 (defn reconcile-by-id [graph id thunk-def key args]
   (let [^Calc calc (get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
-    (if (contains? (::up-to-date graph) id)
+    (if (transient-contains? (::up-to-date graph) id)
       graph
       (if (and (some? calc)
                (not (contains? (::dirty-set graph) id))
-               (not (intersects? (::triggers graph) (.-deps calc)))
+               (not (transient-intersects? (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (with-thunks-forbidden up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
-        (update graph ::up-to-date conj id)        
+        (update graph ::up-to-date conj! id)
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
                         *flashbacks* (when calc
@@ -149,10 +152,10 @@
                         (Calc. value' state' deps' thunk-def args key
                                (into {} children')
                                (into (vector-of :long) (map second) children')))
-              (update ::up-to-date conj id)
+              (update ::up-to-date conj! id)
               (cond-> (and (some? calc)
                            (with-thunks-forbidden changed? thunk-def-wrapped (.-value calc) value'))
-                (update ::triggers conj id))))))))
+                (update ::triggers conj! id))))))))
 
 (defn reconcile-thunk [graph flashbacks thunk-def key args]
   (if-let [id (when flashbacks
@@ -176,7 +179,7 @@
 (defn traverse-graph [graph id dirty-set]
   (let [^Calc c (get (::values graph) id)]
     (if (or (contains? dirty-set id)
-            (intersects? (::triggers graph) (.-deps c)))
+            (transient-intersects? (::triggers graph) (.-deps c)))
       (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
             ^Calc c' (get (::values graph') id)]
         (reduce (fn [g id]
@@ -185,7 +188,7 @@
                 (.-children c')))
       (reduce (fn [g c-id]
                 (let [g' (traverse-graph g c-id dirty-set)]
-                  (if (intersects? (::triggers g') (.-deps c))
+                  (if (transient-intersects? (::triggers g') (.-deps c))
                     (reduced (traverse-graph g' id dirty-set))
                     g')))
               graph
@@ -201,8 +204,8 @@
         [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
                                                 ::middleware middleware
                                                 ::dirty-set dirty-set
-                                                ::triggers (i/int-set)
-                                                ::up-to-date (i/int-set))
+                                                ::triggers (transient (i/int-set))
+                                                ::up-to-date (transient (i/int-set)))
                                           (when-let [root-id (::root graph)]
                                             {::root root-id}) ;; flashbacks
                                           f ::root args-vector)
