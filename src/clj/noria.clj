@@ -284,4 +284,5 @@
       [(assoc graph
               ::next-node @*next-node*
               ::callbacks @*callbacks*)
-       (persistent! @*updates*)])))
+       (persistent! @*updates*)
+       value])))

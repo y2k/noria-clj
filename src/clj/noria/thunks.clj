@@ -216,4 +216,4 @@
                   (dissoc ::triggers
                           ::dirty-set
                           ::up-to-date))]
-    [graph (.-value ^Calc (get-in graph [::values root-id]))]))
+    [graph (binding [*graph* (atom graph)] (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]))
