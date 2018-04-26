@@ -188,7 +188,8 @@
                 (.-children c')))
       (reduce (fn [g c-id]
                 (let [g' (traverse-graph g c-id dirty-set)]
-                  (if (transient-intersects? (::triggers g') (.-deps c))
+                  (if (and (contains? (.-deps c) c-id)
+                           (transient-contains? (::triggers g') c-id))
                     (reduced (traverse-graph g' id dirty-set))
                     g')))
               graph
