@@ -49,7 +49,6 @@
                  deps
                  thunk-def
                  args
-                 key
                  children-by-keys
                  children])
 
@@ -121,7 +120,7 @@
   (reduce (fn [_ e]
             (if (transient-contains? s e) (reduced true) false)) false elts))
 
-(defn reconcile-by-id [graph id thunk-def key args]
+(defn reconcile-by-id [graph id thunk-def args]
   (let [^Calc calc (get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
     (if (transient-contains? (::up-to-date graph) id)
@@ -149,7 +148,7 @@
                                         children'))))
 
               (update ::values assoc id
-                        (Calc. value' state' deps' thunk-def args key
+                        (Calc. value' state' deps' thunk-def args
                                (into {} children')
                                (into (vector-of :long) (map second) children')))
               (update ::up-to-date conj! id)
@@ -160,10 +159,10 @@
 (defn reconcile-thunk [graph flashbacks thunk-def key args]
   (if-let [id (when flashbacks
                 (get flashbacks key))]
-    [id (reconcile-by-id graph id thunk-def key args)]
+    [id (reconcile-by-id graph id thunk-def args)]
     (let [graph' (update graph ::max-thunk-id inc)
           id (::max-thunk-id graph')]
-      [id (reconcile-by-id graph' id thunk-def key args)])))
+      [id (reconcile-by-id graph' id thunk-def args)])))
 
 (defn thunk* [key thunk-def args-vector]
   (let [[id graph'] (reconcile-thunk @*graph* *flashbacks* thunk-def key args-vector)]
@@ -180,7 +179,7 @@
   (let [^Calc c (get (::values graph) id)]
     (if (or (contains? dirty-set id)
             (transient-intersects? (::triggers graph) (.-deps c)))
-      (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-key c) (.-args c))
+      (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-args c))
             ^Calc c' (get (::values graph') id)]
         (reduce (fn [g id]
                   (traverse-graph g id dirty-set))

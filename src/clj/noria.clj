@@ -256,13 +256,13 @@
                 ::type type
                 ::node node-id) node-id]))
     (destroy! [this {::keys [node attrs] :as state} destroy-children!]
-      (doseq [[attr value] attrs]
+      #_(doseq [[attr value] attrs]
         (case (get-data-type attr)
           :node (swap! *updates* conj! {:noria/update-type :set-attr
                                         :noria/node node
                                         :noria/attr attr
                                         :noria/value nil})
-          :node-seq (doseq [n value]
+          :nodes-seq (doseq [n value]
                       (swap! *updates* conj! {:noria/update-type :remove
                                               :noria/node node
                                               :noria/attr attr
