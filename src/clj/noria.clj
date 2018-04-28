@@ -5,6 +5,29 @@
   (:import [noria LCS]
            [noria.thunks Thunk]))
 
+(s/def :noria/node nat-int?)
+(s/def :noria/update-type #{:add :remove :make-node :set-attr :destroy})
+(s/def :noria/attr keyword?)
+(s/def :noria/value any?)
+(s/def :noria/index nat-int?)
+(s/def :noria/type keyword?)
+(s/def :noria/constructor-parameters (s/map-of keyword? any?))
+
+(defmulti update-spec :noria/update-type)
+(defmethod update-spec :add [_]
+  (s/keys :req [:noria/node :noria/attr :noria/value :noria/index]))
+(defmethod update-spec :remove [_]
+  (s/keys :req [:noria/node :noria/attr :noria/value]))
+(defmethod update-spec :make-node [_]
+  (s/keys :req [:noria/node :noria/type :noria/constructor-parameters]))
+(defmethod update-spec :set-attr [_]
+  (s/keys :req [:noria/node :noria/attr :noria/value]))
+(defmethod update-spec :destroy [_]
+  (s/keys :req [:noria/node]))
+
+(s/def :noria/update (s/multi-spec update-spec :noria/update-type))
+
+
 (defonce schema (atom {}))
 
 (defn get-data-type [k]
