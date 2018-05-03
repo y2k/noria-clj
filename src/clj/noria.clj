@@ -11,6 +11,7 @@
 (s/def :noria/value any?)
 (s/def :noria/index nat-int?)
 (s/def :noria/type keyword?)
+(s/def :noria/key any?)
 (s/def :noria/constructor-parameters (s/map-of keyword? any?))
 
 (defmulti update-spec :noria/update-type)
@@ -113,13 +114,13 @@
     `(t/thunk* ~key ~thunk-def [~@args])))
 
 (s/def ::-<< (s/cat :key-spec ::key-spec
-                    :expr any?))
+                    :expr (s/* any?)))
 
 (defmacro -<< [& stuff]
   (let [{{key :key} :key-spec
          :keys [expr]} (s/conform ::-<< stuff)
         key (or key `(quote ~(gensym)))]
-    `(t/thunk* ~key (fn [] ~expr) [])))
+    `(t/thunk* ~key (fn [] ~@expr) [])))
 
 (def deref-or-value t/deref-or-value)
 (def thunk-def t/thunk-def)
