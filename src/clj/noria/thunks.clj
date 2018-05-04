@@ -16,7 +16,7 @@
   (:import [gnu.trove TLongHashSet]))
 
 (defprotocol ThunkDef
-  (destroy! [this state destroy-children!])
+  (destroy! [this state])
   (compute [this state arg])
   (up-to-date? [this state old-arg new-arg])
   (changed? [this old-value new-value]))
@@ -27,7 +27,7 @@
   (compute [this state args]
     [state (apply this args)])
   (changed? [this old-value new-value] (not= old-value new-value))
-  (destroy! [this state destroy-children!] (destroy-children!)))
+  (destroy! [this state]))
 
 (defrecord Calc [value
                  state
@@ -83,32 +83,29 @@
 (defmethod pprint/simple-dispatch Thunk [s]
   (pr s))
 
-(defn descendants [g id]
-  (let [desc* (fn desc* [d g id]
-                (let [^Calc c (get (::values g) id)]
-                  (reduce (fn [d c]
-                            (-> d (conj! c) (desc* g c))) d (.-children c))))]
-    (persistent! (desc* (transient (i/int-set)) g id))))
+(defn reduce-int-array [f init ^longs array]
+  (let [l (alength array)]
+    (loop [i 0
+           acc init]
+      (if (< i l)
+        (recur (inc i) (f acc (long (aget array i))))
+        acc))))
 
 (defn gc [graph ids]
-  (let [destroy (fn destroy [id]
-                  (let [^Calc c (get (::values graph) id)
-                        thunk-def (.-thunk-def c)
-                        children (.-children c)
-                        state (.-state c)]
-                    (destroy! ((::middleware graph) thunk-def)
-                              state #(doseq [c children]
-                                      (destroy c)))))]
-    (doseq [id ids] (destroy id)))
-
-  (update graph ::values (fn [v]
-                           (transduce
-                            (mapcat (fn [id] (descendants graph id)))
-                            (completing (fn [v id]
-                                          (dissoc! v id))
-                                        persistent!)
-                            (transient v)
-                            ids))))
+  (let [destroy-rec (fn destroy-rec [values ^long id]
+                      (let [^Calc c (get values id)
+                            r (reduce-int-array destroy-rec
+                                                (dissoc! values id)
+                                                (.-children c))]
+                        (destroy! ((::middleware graph) (.-thunk-def c))
+                                  (.-state c))
+                        r))]
+    (update graph ::values (fn [values]
+                             (let [iterator (.iterator ^TLongHashSet ids)]
+                               (loop [s (transient values)]
+                                 (if (.hasNext iterator)                                 
+                                   (recur (destroy-rec s (.next iterator)))
+                                   (persistent! s))))))))
 
 (defn reconcile-by-id [graph ^long id thunk-def args]
   (let [^Calc calc (get (::values graph) id)
@@ -129,21 +126,18 @@
                         *children* (atom (transient []))]
                 (let [[state value] (compute thunk-def-wrapped (if calc (.-state calc) {:noria/id id}) args)]
                   [@*graph* state value *dependencies* (persistent! @*children*)]))
-              children-array (let [c-c (count children')
-                                   a (long-array c-c)]
-                               (loop [i 0]
-                                 (if (< i c-c)
-                                   (do
-                                     (aset a i (long (nth (nth children' i) 1)))
-                                     (recur (inc i)))
-                                   a)))]
-
+              ^longs children-array (let [c-c (count children')
+                                          a (long-array c-c)]
+                                      (loop [i 0]
+                                        (if (< i c-c)
+                                          (do
+                                            (aset a i (long (nth (nth children' i) 1)))
+                                            (recur (inc i)))
+                                          a)))]
           (-> graph'
               (cond-> calc
-                (gc (i/difference (i/int-set (.-children calc))
-                                  (into (i/int-set)
-                                        children-array))))
-
+                (gc (doto (TLongHashSet. ^longs (.-children calc))
+                      (.removeAll children-array))))
               (update ::values assoc id
                         (Calc. value' state' deps' thunk-def args
                                (into {} children')
@@ -171,14 +165,6 @@
   (if (instance? Thunk thunk-or-value)
     (deref thunk-or-value)
     thunk-or-value))
-
-(defn reduce-int-array [f init ^longs array]
-  (let [l (alength array)]
-    (loop [i 0
-           acc init]
-      (if (< i l)
-        (recur (inc i) (f acc (long (aget array i))))
-        acc))))
 
 (defn traverse-graph [graph id dirty-set]
   (let [^Calc c (get (::values graph) id)]
@@ -235,7 +221,7 @@
   (let [my-up-to-date? (:up-to-date? params =)
         my-compute (:compute params)
         my-changed? (:changed? params not=)
-        my-destroy! (:destroy! params (fn [state destroy-children!] (destroy-children!)))]
+        my-destroy! (:destroy! params identity)]
     (assert (some? my-compute))
     (reify ThunkDef
       (up-to-date? [this state old-arg new-arg]
@@ -244,6 +230,6 @@
         (my-compute state args))
       (changed? [this old-value new-value]
         (with-thunks-forbidden my-changed? old-value new-value))
-      (destroy! [this state destroy-children!]
-        (my-destroy! state destroy-children!)))))
+      (destroy! [this state]
+        (my-destroy! state)))))
 
