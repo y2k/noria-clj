@@ -140,9 +140,8 @@
 
           (-> graph'
               (cond-> calc
-                (gc (i/difference (i/int-set (.-children calc))
-                                  (into (i/int-set)
-                                        children-array))))
+                (gc (i/difference (TLongHashSet. (.-children calc))
+                                  children-array)))
 
               (update ::values assoc id
                         (Calc. value' state' deps' thunk-def args
