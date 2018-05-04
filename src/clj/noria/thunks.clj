@@ -12,7 +12,8 @@
 
   But we need a place to stop change propagation. Change is a value. So we must compare output"
   (:require [clojure.pprint :as pprint]
-            [clojure.data.int-map :as i]))
+            [clojure.data.int-map :as i])
+  (:import [gnu.trove TLongHashSet]))
 
 (defprotocol ThunkDef
   (destroy! [this state destroy-children!])
@@ -28,22 +29,6 @@
   (changed? [this old-value new-value] (not= old-value new-value))
   (destroy! [this state destroy-children!] (destroy-children!)))
 
-(defn thunk-def [params]
-  (let [my-up-to-date? (:up-to-date? params =)
-        my-compute (:compute params)
-        my-changed? (:changed? params not=)
-        my-destroy! (:destroy! params (fn [state destroy-children!] (destroy-children!)))]
-    (assert (some? my-compute))
-    (reify ThunkDef
-      (up-to-date? [this state old-arg new-arg]
-        (my-up-to-date? old-arg new-arg))
-      (compute [this state args]
-        (my-compute state args))
-      (changed? [this old-value new-value]
-        (my-changed? old-value new-value))
-      (destroy! [this state destroy-children!]
-        (my-destroy! state destroy-children!)))))
-
 (defrecord Calc [value
                  state
                  deps
@@ -57,11 +42,29 @@
 (def ^:dynamic *children* nil)
 (def ^:dynamic *graph* nil)
 
+(defn t-intersects? [^TLongHashSet s1 ^TLongHashSet s2]
+  (if (<= (.size s1) (.size s2))
+    (let [i (.iterator s1)]
+      (loop []
+        (if (.hasNext i)
+          (if (.contains s2 (.next i))
+            true
+            (recur))
+          false)))
+    (recur s2 s1)))
+
+(defn t-contains? [^TLongHashSet s1 ^long e]
+  (.contains s1 e))
+
+(defn t-conj! [^TLongHashSet s ^long e]
+  (.add s e)
+  s)
+
 (deftype Thunk [^long id]
   clojure.lang.IDeref
   (deref [this]
     (when *dependencies*
-      (swap! *dependencies* conj! id))
+      (t-conj! *dependencies* id))
     (assert (some? *graph*) {:error "Thunk deref outside of computation"
                              :thunk-id id})
     (let [v (.-value ^Calc (get (::values @*graph*) id))]
@@ -107,54 +110,48 @@
                             (transient v)
                             ids))))
 
-(defn with-thunks-forbidden [f & args]
-  (binding [*graph* nil
-            *dependencies* nil
-            *children* nil]
-    (apply f args)))
-
-(defn transient-contains? [^clojure.lang.ITransientSet t e]
-  (.contains t e))
-
-(defn transient-intersects? [s elts]
-  (reduce (fn [_ e]
-            (if (transient-contains? s e) (reduced true) false)) false elts))
-
-(defn reconcile-by-id [graph id thunk-def args]
+(defn reconcile-by-id [graph ^long id thunk-def args]
   (let [^Calc calc (get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
-    (if (transient-contains? (::up-to-date graph) id)
+    (if (t-contains? (::up-to-date graph) id)
       graph
       (if (and (some? calc)
                (not (contains? (::dirty-set graph) id))
-               (not (transient-intersects? (::triggers graph) (.-deps calc)))
+               (not (t-intersects? (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
-               (with-thunks-forbidden up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
-        (update graph ::up-to-date conj! id)
+               (up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
+        (update graph ::up-to-date t-conj! id)
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
                         *flashbacks* (when calc
                                        (.-children-by-keys calc))
-                        *dependencies* (atom (transient (i/int-set)))
+                        *dependencies* (TLongHashSet.)
                         *children* (atom (transient []))]
                 (let [[state value] (compute thunk-def-wrapped (if calc (.-state calc) {:noria/id id}) args)]
-                  [@*graph* state value (persistent! @*dependencies*) (persistent! @*children*)]))]
-          
+                  [@*graph* state value *dependencies* (persistent! @*children*)]))
+              children-array (let [c-c (count children')
+                                   a (long-array c-c)]
+                               (loop [i 0]
+                                 (if (< i c-c)
+                                   (do
+                                     (aset a i (long (nth (nth children' i) 1)))
+                                     (recur (inc i)))
+                                   a)))]
+
           (-> graph'
               (cond-> calc
                 (gc (i/difference (i/int-set (.-children calc))
                                   (into (i/int-set)
-                                        (map second)
-                                        children'))))
+                                        children-array))))
 
               (update ::values assoc id
                         (Calc. value' state' deps' thunk-def args
                                (into {} children')
-                               (into (vector-of :long) (map second) children')))
-              (update ::up-to-date conj! id)
+                               children-array))
+              (update ::up-to-date t-conj! id)
               (cond-> (and (some? calc)
-                           (with-thunks-forbidden changed? thunk-def-wrapped (.-value calc) value'))
-                (update ::triggers conj! id))))))))
+                           (changed? thunk-def-wrapped (.-value calc) value'))
+                (update ::triggers t-conj! id))))))))
 
 (defn reconcile-thunk [graph flashbacks thunk-def key args]
   (if-let [id (when flashbacks
@@ -175,24 +172,34 @@
     (deref thunk-or-value)
     thunk-or-value))
 
+(defn reduce-int-array [f init ^longs array]
+  (let [l (alength array)]
+    (loop [i 0
+           acc init]
+      (if (< i l)
+        (recur (inc i) (f acc (long (aget array i))))
+        acc))))
+
 (defn traverse-graph [graph id dirty-set]
   (let [^Calc c (get (::values graph) id)]
     (if (or (contains? dirty-set id)
-            (transient-intersects? (::triggers graph) (.-deps c)))
+            (t-intersects? (::triggers graph) (.-deps c)))
       (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-args c))
             ^Calc c' (get (::values graph') id)]
-        (reduce (fn [g id]
-                  (traverse-graph g id dirty-set))
-                graph'
-                (.-children c')))
-      (reduce (fn [g c-id]
-                (let [g' (traverse-graph g c-id dirty-set)]
-                  (if (and (contains? (.-deps c) c-id)
-                           (transient-contains? (::triggers g') c-id))
-                    (reduced (traverse-graph g' id dirty-set))
-                    g')))
-              graph
-              (.-children c)))))
+        (reduce-int-array
+         (fn [g ^long id]
+           (traverse-graph g id dirty-set))
+         graph'
+         (.-children c')))
+      (reduce-int-array
+       (fn [g ^long c-id]
+         (let [g' (traverse-graph g c-id dirty-set)]
+           (if (and (t-contains? (.-deps c) c-id)
+                    (t-contains? (::triggers g') c-id))
+             (reduced (traverse-graph g' id dirty-set))
+             g')))
+       graph
+       (.-children c)))))
 
 (def graph-0 {::values (i/int-map)
               ::max-thunk-id 0})
@@ -204,8 +211,8 @@
         [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
                                                 ::middleware middleware
                                                 ::dirty-set dirty-set
-                                                ::triggers (transient (i/int-set))
-                                                ::up-to-date (transient (i/int-set)))
+                                                ::triggers (TLongHashSet.)
+                                                ::up-to-date (TLongHashSet.))
                                           (when-let [root-id (::root graph)]
                                             {::root root-id}) ;; flashbacks
                                           f ::root args-vector)
@@ -217,3 +224,26 @@
                           ::dirty-set
                           ::up-to-date))]
     [graph (binding [*graph* (atom graph)] (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]))
+
+(defn with-thunks-forbidden [f & args]
+  (binding [*graph* nil
+            *dependencies* nil
+            *children* nil]
+    (apply f args)))
+
+(defn thunk-def [params]
+  (let [my-up-to-date? (:up-to-date? params =)
+        my-compute (:compute params)
+        my-changed? (:changed? params not=)
+        my-destroy! (:destroy! params (fn [state destroy-children!] (destroy-children!)))]
+    (assert (some? my-compute))
+    (reify ThunkDef
+      (up-to-date? [this state old-arg new-arg]
+        (with-thunks-forbidden my-up-to-date? old-arg new-arg))
+      (compute [this state args]
+        (my-compute state args))
+      (changed? [this old-value new-value]
+        (with-thunks-forbidden my-changed? old-value new-value))
+      (destroy! [this state destroy-children!]
+        (my-destroy! state destroy-children!)))))
+
