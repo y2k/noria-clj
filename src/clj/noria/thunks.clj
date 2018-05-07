@@ -92,22 +92,26 @@
         acc))))
 
 (defn gc [graph ids]
-  (let [destroy-rec (fn destroy-rec [values ^long id]
-                      (let [^Calc c (get values id)
-                            r (reduce-int-array destroy-rec
-                                                (dissoc! values id)
-                                                (.-children c))]
-                        (destroy! ((::middleware graph) (.-thunk-def c))
-                                  (.-state c))
-                        r))]
-    (update graph ::values (fn [values]
-                             (let [iterator (.iterator ^TLongHashSet ids)]
-                               (loop [s (transient values)]
-                                 (if (.hasNext iterator)                                 
-                                   (recur (destroy-rec s (.next iterator)))
-                                   (persistent! s))))))))
+  (update
+   graph ::values
+   (fn [values]
+     (let [old-values (::values graph)
+           middleware (::middleware graph)
+           destroy-rec (fn destroy-rec [values ^long id]
+                         (let [^Calc c (get old-values id)
+                               r (reduce-int-array destroy-rec
+                                                   (dissoc! values id)
+                                                   (.-children c))]
+                           (destroy! (middleware (.-thunk-def c))
+                                     (.-state c))
+                           r))
+           iterator (.iterator ^TLongHashSet ids)]              
+       (loop [s (transient values)]
+         (if (.hasNext iterator)                                 
+           (recur (destroy-rec s (.next iterator)))
+           (persistent! s)))))))
 
-(defn reconcile-by-id [graph ^long id thunk-def args]
+(defn reconcile-by-id [graph ^long id thunk-def args]  
   (let [^Calc calc (get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
     (if (t-contains? (::up-to-date graph) id)
@@ -124,7 +128,11 @@
                                        (.-children-by-keys calc))
                         *dependencies* (TLongHashSet.)
                         *children* (atom (transient []))]
-                (let [[state value] (compute thunk-def-wrapped (if calc (.-state calc) {:noria/id id}) args)]
+                (let [[state value] (compute thunk-def-wrapped
+                                             (if calc
+                                               (.-state calc)
+                                               {:noria/id id})
+                                             args)]
                   [@*graph* state value *dependencies* (persistent! @*children*)]))
               ^longs children-array (let [c-c (count children')
                                           a (long-array c-c)]
@@ -209,7 +217,8 @@
                   (dissoc ::triggers
                           ::dirty-set
                           ::up-to-date))]
-    [graph (binding [*graph* (atom graph)] (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]))
+    [graph (binding [*graph* (atom graph)]
+             (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]))
 
 (defn with-thunks-forbidden [f & args]
   (binding [*graph* nil

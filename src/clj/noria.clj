@@ -310,3 +310,59 @@
               ::callbacks @*callbacks*)
        (persistent! @*updates*)
        value])))
+
+
+
+(comment
+
+  (defn foo [x y]
+    (+ x y))
+
+  (defn bar [x y]
+    (- x y))
+
+  (defn baz [x y]
+    (+ x y))
+  
+  (defn simple-arithmetics [x y z]
+    (let [f (foo x y)
+          b (bar y z)]
+      (foo f b)))
+
+  (simple-arithmetics 1 2 3)
+
+  
+
+  (defn foo [x y]
+    (prn :foo)
+    (+ @x @y))
+
+  (defn bar [x y]
+    (prn :bar)
+    (- @x @y))
+
+  (defn baz [x y]
+    (prn :baz)
+    (+ @x @y))
+  
+  (defn simple-arithmetics [x y z]
+    (prn :root)
+    (let [f (-< foo x y)
+          b (-< bar y z)]
+      (-< baz f b)))
+
+  (defn root [x y z]
+    (-< simple-arithmetics (-<< x) (-<< y) (-<< z)))
+
+  (let [[g res]
+        (t/evaluate nil
+                    root
+                    [1 2 3])]
+    (def g g)
+    res
+    )
+
+  (t/evaluate g
+              root
+              [1 2 40])
+  )
