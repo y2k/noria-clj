@@ -132,8 +132,10 @@
                                              (if calc
                                                (.-state calc)
                                                {:noria/id id})
-                                             args)]
-                  [@*graph* state value *dependencies* (persistent! @*children*)]))
+                                             args)
+                      graph' @*graph*]
+                  (reset! *graph* nil)
+                  [graph' state value *dependencies* (persistent! @*children*)]))
               ^longs children-array (let [c-c (count children')
                                           a (long-array c-c)]
                                       (loop [i 0]
@@ -226,19 +228,4 @@
             *children* nil]
     (apply f args)))
 
-(defn thunk-def [params]
-  (let [my-up-to-date? (:up-to-date? params =)
-        my-compute (:compute params)
-        my-changed? (:changed? params not=)
-        my-destroy! (:destroy! params identity)]
-    (assert (some? my-compute))
-    (reify ThunkDef
-      (up-to-date? [this state old-arg new-arg]
-        (with-thunks-forbidden my-up-to-date? old-arg new-arg))
-      (compute [this state args]
-        (my-compute state args))
-      (changed? [this old-value new-value]
-        (with-thunks-forbidden my-changed? old-value new-value))
-      (destroy! [this state]
-        (my-destroy! state)))))
 

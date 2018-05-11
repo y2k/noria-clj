@@ -123,7 +123,22 @@
     `(t/thunk* ~key (fn [] ~@expr) [])))
 
 (def deref-or-value t/deref-or-value)
-(def thunk-def t/thunk-def)
+
+(defn thunk-def [params]
+  (let [my-up-to-date? (:up-to-date? params =)
+        my-compute (:compute params)
+        my-changed? (:changed? params not=)
+        my-destroy! (:destroy! params identity)]
+    (assert (some? my-compute))
+    (reify t/ThunkDef
+      (up-to-date? [this state old-arg new-arg]
+        (t/with-thunks-forbidden my-up-to-date? old-arg new-arg))
+      (compute [this state args]
+        (my-compute state args))
+      (changed? [this old-value new-value]
+        (t/with-thunks-forbidden my-changed? old-value new-value))
+      (destroy! [this state]
+        (my-destroy! state)))))
 
 (def ^:dynamic *updates* nil)
 (def ^:dynamic *next-node* nil)
