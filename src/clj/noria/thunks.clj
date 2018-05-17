@@ -88,7 +88,10 @@
     (loop [i 0
            acc init]
       (if (< i l)
-        (recur (inc i) (f acc (long (aget array i))))
+        (let [acc' (f acc (long (aget array i)))]
+          (if (reduced? acc')
+            @acc'
+            (recur (inc i) acc')))
         acc))))
 
 (defn gc [graph ids]
