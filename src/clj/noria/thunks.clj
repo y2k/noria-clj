@@ -207,14 +207,17 @@
                                        :or {dirty-set (i/int-set)
                                             middleware identity}}]
   (let [first-run? (nil? (::root graph))
+        up-to-date (TLongHashSet.)
         [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
                                                 ::middleware middleware
                                                 ::dirty-set dirty-set
                                                 ::triggers (TLongHashSet.)
-                                                ::up-to-date (TLongHashSet.))
+                                                ::up-to-date up-to-date)
                                           (when-let [root-id (::root graph)]
                                             {::root root-id}) ;; flashbacks
                                           f ::root args-vector)
+        _ (when-not first-run?
+            (.remove up-to-date root-id))
         graph (-> graph
                   (assoc ::root root-id)
                   (cond-> (not first-run?)
