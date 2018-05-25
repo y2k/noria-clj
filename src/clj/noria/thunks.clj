@@ -124,7 +124,9 @@
                (not (t-intersects? (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
-        (update graph ::up-to-date t-conj! id)
+        (do
+          (t-conj! (::up-to-date graph) id)
+          graph)
         (let [[graph' state' value' deps' children']
               (binding [*graph* (atom graph)
                         *flashbacks* (when calc
@@ -147,15 +149,15 @@
                                             (aset a i (long (nth (nth children' i) 1)))
                                             (recur (inc i)))
                                           a)))]
+          (t-conj! (::up-to-date graph') id)
           (-> graph'
-              (cond-> calc
+              (cond-> (and calc (not (java.util.Arrays/equals ^longs (.-children calc) children-array)))
                 (gc (doto (TLongHashSet. ^longs (.-children calc))
                       (.removeAll children-array))))
               (update ::values assoc id
                         (Calc. value' state' deps' thunk-def args
                                (into {} children')
                                children-array))
-              (update ::up-to-date t-conj! id)
               (cond-> (and (some? calc)
                            (changed? thunk-def-wrapped (.-value calc) value'))
                 (update ::triggers t-conj! id))))))))
