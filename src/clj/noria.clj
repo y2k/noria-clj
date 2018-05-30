@@ -311,15 +311,17 @@
                               :noria/node node}))
     (changed? [this old-value new-value] (not= old-value new-value))))
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set middleware]
+(defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
                                        :or {dirty-set (i/int-set)
+                                            assert? false
                                             middleware identity}}]
   (binding [*updates* (atom (transient []))
             *callbacks* (atom (or (::callbacks graph) {}))
             *next-node* (atom (or (::next-node graph) 0))]
     (let [[graph value] (t/evaluate graph f args-vector
                                     :dirty-set dirty-set
-                                    :middleware middleware)]
+                                    :middleware middleware
+                                    :assert? assert?)]
       [(assoc graph
               ::next-node @*next-node*
               ::callbacks @*callbacks*)

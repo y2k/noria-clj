@@ -41,6 +41,7 @@
 (def ^:dynamic *flashbacks* nil)
 (def ^:dynamic *children* nil)
 (def ^:dynamic *graph* nil)
+(def ^:dynamic *assert?* false)
 
 (defn t-intersects? [^TLongHashSet s1 ^TLongHashSet s2]
   (if (<= (.size s1) (.size s2))
@@ -83,12 +84,12 @@
 (defmethod pprint/simple-dispatch Thunk [s]
   (pr s))
 
-(defn reduce-int-array [f init ^longs array]
+(defn reduce-int-array [^clojure.lang.IFn$OLO f init ^longs array]
   (let [l (alength array)]
     (loop [i 0
            acc init]
       (if (< i l)
-        (let [acc' (f acc (long (aget array i)))]
+        (let [acc' (.invokePrim f acc (long (aget array i)))]
           (if (reduced? acc')
             @acc'
             (recur (inc i) acc')))
@@ -205,35 +206,39 @@
 (def graph-0 {::values (i/int-map)
               ::max-thunk-id 0})
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set middleware]
+(defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
                                        :or {dirty-set (i/int-set)
+                                            assert? false
                                             middleware identity}}]
-  (let [first-run? (nil? (::root graph))
-        up-to-date (TLongHashSet.)
-        [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
-                                                ::middleware middleware
-                                                ::dirty-set dirty-set
-                                                ::triggers (TLongHashSet.)
-                                                ::up-to-date up-to-date)
-                                          (when-let [root-id (::root graph)]
-                                            {::root root-id}) ;; flashbacks
-                                          f ::root args-vector)
-        _ (when-not first-run?
-            (.remove up-to-date root-id))
-        graph (-> graph
-                  (assoc ::root root-id)
-                  (cond-> (not first-run?)
-                    (traverse-graph root-id dirty-set))
-                  (dissoc ::triggers
-                          ::dirty-set
-                          ::up-to-date))]
-    [graph (binding [*graph* (atom graph)]
-             (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]))
+  (binding [*assert?* assert?]
+    (let [first-run? (nil? (::root graph))
+          up-to-date (TLongHashSet.)
+          [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
+                                                  ::middleware middleware
+                                                  ::dirty-set dirty-set
+                                                  ::triggers (TLongHashSet.)
+                                                  ::up-to-date up-to-date)
+                                           (when-let [root-id (::root graph)]
+                                             {::root root-id}) ;; flashbacks
+                                           f ::root args-vector)
+          _ (when-not first-run?
+              (.remove up-to-date root-id))
+          graph (-> graph
+                    (assoc ::root root-id)
+                    (cond-> (not first-run?)
+                      (traverse-graph root-id dirty-set))
+                    (dissoc ::triggers
+                      ::dirty-set
+                      ::up-to-date))]
+      [graph (binding [*graph* (atom graph)]
+               (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))])))
 
 (defn with-thunks-forbidden [f & args]
-  (binding [*graph* nil
-            *dependencies* nil
-            *children* nil]
+  (if *assert?*
+    (binding [*graph* nil
+              *dependencies* nil
+              *children* nil]
+      (apply f args))
     (apply f args)))
 
 
