@@ -3,7 +3,8 @@
             [noria.thunks :as t]
             [clojure.spec.alpha :as s])
   (:import [noria LCS]
-           [noria.thunks Thunk]))
+           [noria.thunks Thunk]
+           [gnu.trove TLongHashSet TLongArrayList TObjectLongHashMap]))
 
 (s/def :noria/node nat-int?)
 (s/def :noria/update-type #{:add :remove :make-node :set-attr :destroy})
@@ -45,57 +46,50 @@
 (defn defconstructor [node-type attrs]
   (swap! constructor-parameters assoc node-type attrs))
 
-(defn update-order [parent-node attr old-nodes new-nodes]
+(defn update-order [parent-node attr ^TLongArrayList old-nodes ^TLongArrayList new-nodes]
   (if (= old-nodes new-nodes)
     nil
-    (let [moved? (complement (into (i/int-set) (LCS/lcs (int-array old-nodes) (int-array new-nodes))))
-          old-nodes-set (i/int-set old-nodes)]
-      (-> []
-          (into
-           (keep
-            (fn [node]
-              (when (and (moved? node) (contains? old-nodes-set node))
-                {::update-type :remove
-                 ::attr attr
-                 ::node parent-node
-                 ::value node})))
-           old-nodes)
-          (into (comp
-                 (map-indexed
-                  (fn [i node]
-                    (when (moved? node)
-                      {::update-type :add
+    (let [lcs (TLongHashSet. (LCS/lcs (.toNativeArray old-nodes) (.toNativeArray new-nodes)))
+          res (java.util.ArrayList.)]
+      (dotimes [i (.size old-nodes)]
+        (let [node (.get old-nodes i)]
+          (when-not (.contains lcs node)
+            (.add res {::update-type :remove
+                       ::attr attr
+                       ::node parent-node
+                       ::value node}))))
+      (dotimes [i (.size new-nodes)]
+        (let [node (.get new-nodes i)]
+          (when-not (.contains lcs node)
+            (.add res {::update-type :add
                        ::attr attr
                        ::node parent-node
                        ::value node
-                       ::index i})))
-                 (filter some?))
-                new-nodes)))))
+                       ::index i}))))
+      res)))
 
-(defn update-set [parent-node attr old-nodes new-nodes]
-  (if (= old-nodes new-nodes)
-    nil
-    (let [to-add (i/difference new-nodes old-nodes)
-          to-remove (i/difference old-nodes new-nodes)
-          idx (count (i/intersection new-nodes old-nodes))]
-      (-> []
-          (into 
-           (map
-            (fn [node]
-              {::update-type :remove
-               ::attr attr
-               ::node parent-node
-               ::value node}))
-           to-remove)
-          (into
-           (map-indexed
-            (fn [i node]
-              {::update-type :add
-               ::attr attr
-               ::node parent-node
-               ::value node
-               ::index (+ idx i)}))
-           to-add)))))
+(defn update-set [parent-node attr ^TLongHashSet old-nodes ^TLongHashSet new-nodes]
+  (let [updates (java.util.ArrayList.)
+        i (volatile! 0)]
+    (.forEach old-nodes (reify gnu.trove.TLongProcedure
+                          (^boolean execute [_ ^long node]
+                           (when-not (.contains new-nodes node)
+                             (.add updates {::update-type :remove
+                                            ::attr attr
+                                            ::node parent-node
+                                            ::value node}))
+                           true)))
+
+    (.forEach new-nodes (reify gnu.trove.TLongProcedure
+                          (^boolean execute [_ ^long node]
+                           (when-not (.contains old-nodes node)
+                             (.add updates {::update-type :add
+                                            ::attr attr
+                                            ::node parent-node
+                                            ::value node
+                                            ::index (vswap! i inc)}))
+                           true)))
+    updates))
 
 (s/def ::key-spec (s/? (s/cat :kw #{:noria/key}
                               :key any?)))
@@ -164,6 +158,24 @@
                                                        state
                                                        (r-f state a nil v)))
                                                    <> m2)))
+            init-children (fn [new-value]
+                            (if (nil? new-value)
+                              nil
+                              (if (unordered? new-value)
+                                (transduce (keep t/deref-or-value)
+                                           (completing
+                                            (fn [^TLongHashSet s ^long i]
+                                              (.add s i)
+                                              s))
+                                           (TLongHashSet.)
+                                           new-value)
+                                (transduce (keep t/deref-or-value)
+                                           (completing
+                                            (fn [^TLongArrayList s ^long i]
+                                              (.add s i)
+                                              s))
+                                           (TLongArrayList.)
+                                           new-value))))
             node-id (if (= old-type type)
                       old-node
                       (let [node-id (swap! *next-node* inc)]
@@ -217,19 +229,25 @@
                             (dissoc! state attr))
 
                           :else state))
-                      :nodes-seq (let [unordered? (unordered? new-value)
-                                       new-nodes (into (if unordered? (i/int-set) [])
-                                                       (keep t/deref-or-value)
-                                                       new-value)
-                                       old-nodes (or old-value (if unordered? (i/int-set) []))
-                                       updates (if unordered?
-                                                 (update-set node-id attr old-nodes new-nodes)
-                                                 (update-order node-id attr old-nodes new-nodes))]
-                                   (swap! *updates* (fn [u] (reduce conj! u updates)))
-                                   (assoc! state attr new-nodes))))) 
+                      :nodes-seq
+                      (let [new-nodes (if (nil? new-value)
+                                        (if (nil? old-value)
+                                          nil
+                                          (if (unordered? old-value)
+                                            (TLongHashSet.)
+                                            (TLongArrayList.)))
+                                        (init-children new-value))
+                            old-nodes (or old-value (if (unordered? new-value) (TLongHashSet.) (TLongArrayList.)))
+                            updates (if (and (nil? new-value)
+                                             (nil? old-value))
+                                      nil (if (unordered? new-value)
+                                            (update-set node-id attr old-nodes new-nodes)
+                                            (update-order node-id attr old-nodes new-nodes)))]
+                        (swap! *updates* (fn [u] (reduce conj! u updates)))
+                        (assoc! state attr new-nodes))))) 
                 (transient (::attrs state))
                 (::attrs state)
-                attrs))
+                attrs)) 
               (let [[attrs' constr updates]
                     (reduce (fn [[attrs constr updates] [attr value]]
                               (let [new-value (t/deref-or-value value)
@@ -262,23 +280,25 @@
                                                          :noria/attr attr
                                                          :noria/value cb})])))
                                   :nodes-seq
-                                  (let [new-nodes (into (if (unordered? new-value) (i/int-set) [])
-                                                        (keep t/deref-or-value)
-                                                        new-value)]
+                                  (let [new-nodes (init-children new-value)]
                                     (if (contains? constructor-params attr)
-                                      [(assoc! attrs attr new-nodes) (assoc! constr attr new-nodes) updates]
+                                      [(assoc! attrs attr new-nodes)
+                                       (assoc! constr attr new-nodes)
+                                       updates]
                                       [(assoc! attrs attr new-nodes)
                                        constr
                                        (transduce
-                                        (map-indexed (fn [i e]
-                                                       {:noria/update-type :add
-                                                        :noria/node node-id
-                                                        :noria/attr attr
-                                                        :noria/value e
-                                                        :noria/index i}))
+                                        (comp
+                                         (keep t/deref-or-value)
+                                         (map-indexed (fn [i e]
+                                                        {:noria/update-type :add
+                                                         :noria/node node-id
+                                                         :noria/attr attr
+                                                         :noria/value e
+                                                         :noria/index i})))
                                         conj!
                                         updates
-                                        new-nodes)])))))
+                                        new-value)])))))
                             [(transient {}) (transient {}) (transient [])]
                             attrs)]
                 (swap! *updates* (fn [u]
@@ -309,7 +329,8 @@
           nil))
       (swap! *updates* conj! {:noria/update-type :destroy
                               :noria/node node}))
-    (changed? [this old-value new-value] (not= old-value new-value))))
+    (changed? [this old-value new-value] (not= old-value new-value))
+    t/Dumb))
 
 (defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
                                        :or {dirty-set (i/int-set)

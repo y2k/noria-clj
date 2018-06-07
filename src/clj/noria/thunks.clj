@@ -3,17 +3,15 @@
   So it can not distinguish thunks from values.
   And it can not deref old thunks because they are new now
   => We must compare thunk inputs as identities
-
   When evaluating some parent we need to compare inputs to stop children from evaluation.
   There are two cases:
   (if (Some child dep is marked as dirty/changed)
     (there is no sense in comparing inputs with = as we know thunks are changed anyways (and up-to-date? will give false positive))
     (there is no sense in comparing current thunk's values as we know they are unchanged))
-
   But we need a place to stop change propagation. Change is a value. So we must compare output"
   (:require [clojure.pprint :as pprint]
             [clojure.data.int-map :as i])
-  (:import [gnu.trove TLongHashSet]))
+  (:import [gnu.trove TLongHashSet TLongArrayList TObjectLongHashMap]))
 
 (defprotocol ThunkDef
   (destroy! [this state])
@@ -29,18 +27,47 @@
   (changed? [this old-value new-value] (not= old-value new-value))
   (destroy! [this state]))
 
-(defrecord Calc [value
-                 state
-                 deps
-                 thunk-def
-                 args
-                 children-by-keys
-                 children])
+(defprotocol Dumb)
 
-(def ^:dynamic *dependencies* nil)
-(def ^:dynamic *flashbacks* nil)
-(def ^:dynamic *children* nil)
-(def ^:dynamic *graph* nil)
+(deftype Calc [state
+               args
+               value
+               thunk-def                 
+               ^TLongHashSet deps                 
+               ^TObjectLongHashMap children-by-keys
+               ^TLongArrayList children])
+
+(deftype Frame [^TObjectLongHashMap flashbacks
+                ^TLongHashSet deps                  
+                ^TObjectLongHashMap children-by-keys
+                ^TLongArrayList children])
+
+(def ^{:tag 'ThreadLocal} >-frame-< (ThreadLocal.))
+(defn current-frame ^Frame [] (.get >-frame-<))
+
+(def ^{:tag 'ThreadLocal} >-graph-< (ThreadLocal.))
+(defn current-graph [] (.get >-graph-<))
+
+(def next-id (atom 0))
+
+(defn empty-frame [flashbacks]
+  (Frame. flashbacks
+          (TLongHashSet.)
+          (TObjectLongHashMap.)
+          (TLongArrayList.)))
+
+(defmacro new-frame [g flashbacks & body]
+  `(let [old-frame# (.get >-frame-<)]
+     (try
+       (let [old-g# (.get >-graph-<)
+             new-frame# (empty-frame ~flashbacks)]
+         (.set >-graph-< ~g)
+         (.set >-frame-< new-frame#)
+         (let [res# (do ~@body)]         
+           [res# new-frame# (.get >-graph-<)]))
+       (finally
+         (.set >-frame-< old-frame#)))))
+
 (def ^:dynamic *assert?* false)
 
 (defn t-intersects? [^TLongHashSet s1 ^TLongHashSet s2]
@@ -61,14 +88,19 @@
   (.add s e)
   s)
 
+(defn append-child! [key ^long id]
+  (let [^Frame frame (current-frame)]
+    (.add ^TLongArrayList (.-children frame) id)
+    (.put ^TObjectLongHashMap (.-children-by-keys frame) key id)))
+
 (deftype Thunk [^long id]
   clojure.lang.IDeref
   (deref [this]
-    (when *dependencies*
-      (t-conj! *dependencies* id))
-    (assert (some? *graph*) {:error "Thunk deref outside of computation"
-                             :thunk-id id})
-    (let [v (.-value ^Calc (get (::values @*graph*) id))]
+    (when-let [frame (current-frame)]
+      (t-conj! (.-deps frame) id))
+    (assert (some? (current-graph)) {:error "Thunk deref outside of computation"
+                                     :thunk-id id})
+    (let [v (.-value ^Calc (get (::values (current-graph)) id))]
       (if (instance? Thunk v)
         (deref v)
         v)))
@@ -84,36 +116,43 @@
 (defmethod pprint/simple-dispatch Thunk [s]
   (pr s))
 
-(defn reduce-int-array [^clojure.lang.IFn$OLO f init ^longs array]
-  (let [l (alength array)]
-    (loop [i 0
-           acc init]
-      (if (< i l)
-        (let [acc' (.invokePrim f acc (long (aget array i)))]
+(defn reduce-int-array [^clojure.lang.IFn$OLO f init ^TLongArrayList array]
+  (let [acc (volatile! init)]    
+    (.forEach
+     array
+     (reify gnu.trove.TLongProcedure
+       (^boolean execute [_ ^long id]
+        (let [acc' (.invokePrim f @acc id)]
           (if (reduced? acc')
-            @acc'
-            (recur (inc i) acc')))
-        acc))))
+            (do
+              (vreset! acc @acc')
+              false)
+            (do
+              (vreset! acc acc')
+              true))))))
+    @acc))
 
-(defn gc [graph ids]
-  (update
-   graph ::values
-   (fn [values]
-     (let [old-values (::values graph)
-           middleware (::middleware graph)
-           destroy-rec (fn destroy-rec [values ^long id]
-                         (let [^Calc c (get old-values id)
-                               r (reduce-int-array destroy-rec
-                                                   (dissoc! values id)
-                                                   (.-children c))]
-                           (destroy! (middleware (.-thunk-def c))
-                                     (.-state c))
-                           r))
-           iterator (.iterator ^TLongHashSet ids)]              
-       (loop [s (transient values)]
-         (if (.hasNext iterator)                                 
-           (recur (destroy-rec s (.next iterator)))
-           (persistent! s)))))))
+(defn gc [graph old-children new-children]
+  (let [^TLongHashSet ids (doto (TLongHashSet. (.toNativeArray ^TLongArrayList old-children))
+                            (.removeAll (.toNativeArray ^TLongArrayList new-children)))]
+    (update
+     graph ::values
+     (fn [values]
+       (let [old-values (::values graph)
+             middleware (::middleware graph)
+             destroy-rec (fn destroy-rec [values ^long id]
+                           (let [^Calc c (get old-values id)
+                                 r (reduce-int-array destroy-rec
+                                                     (dissoc! values id)
+                                                     (.-children c))]
+                             (destroy! (middleware (.-thunk-def c))
+                                       (.-state c))
+                             r))
+             iterator (.iterator ids)]
+         (loop [s (transient values)]
+           (if (.hasNext iterator)                                 
+             (recur (destroy-rec s (.next iterator)))
+             (persistent! s))))))))
 
 (defn reconcile-by-id [graph ^long id thunk-def args]  
   (let [^Calc calc (get (::values graph) id)
@@ -128,53 +167,46 @@
         (do
           (t-conj! (::up-to-date graph) id)
           graph)
-        (let [[graph' state' value' deps' children']
-              (binding [*graph* (atom graph)
-                        *flashbacks* (when calc
-                                       (.-children-by-keys calc))
-                        *dependencies* (TLongHashSet.)
-                        *children* (atom (transient []))]
-                (let [[state value] (compute thunk-def-wrapped
-                                             (if calc
-                                               (.-state calc)
-                                               {:noria/id id})
-                                             args)
-                      graph' @*graph*]
-                  (reset! *graph* nil)
-                  [graph' state value *dependencies* (persistent! @*children*)]))
-              ^longs children-array (let [c-c (count children')
-                                          a (long-array c-c)]
-                                      (loop [i 0]
-                                        (if (< i c-c)
-                                          (do
-                                            (aset a i (long (nth (nth children' i) 1)))
-                                            (recur (inc i)))
-                                          a)))]
+        (let [[[state' value'] ^Frame frame graph'] (new-frame
+                                              graph 
+                                              (if calc (.-children-by-keys calc) (TObjectLongHashMap.))
+                                              (compute thunk-def-wrapped
+                                                       (if calc
+                                                         (.-state calc)
+                                                         {:noria/id id})
+                                                       args))
+              deps' (.-deps frame)
+              children' (.-children frame)
+              children-by-keys' (.-children-by-keys frame)]
           (t-conj! (::up-to-date graph') id)
           (-> graph'
-              (cond-> (and calc (not (java.util.Arrays/equals ^longs (.-children calc) children-array)))
-                (gc (doto (TLongHashSet. ^longs (.-children calc))
-                      (.removeAll children-array))))
+              (cond-> (and calc (not= (.-children calc) children'))
+                (gc (.-children calc) children'))
               (update ::values assoc id
-                        (Calc. value' state' deps' thunk-def args
-                               (into {} children')
-                               children-array))
+                      (Calc. state' args value' thunk-def deps'
+                             children-by-keys'
+                             children'))
               (cond-> (and (some? calc)
                            (changed? thunk-def-wrapped (.-value calc) value'))
                 (update ::triggers t-conj! id))))))))
 
-(defn reconcile-thunk [graph flashbacks thunk-def key args]
+(defn reconcile-thunk [graph ^TObjectLongHashMap flashbacks thunk-def key args]
   (if-let [id (when flashbacks
-                (get flashbacks key))]
+                (when (.containsKey flashbacks key)
+                  (.get flashbacks key)))]
     [id (reconcile-by-id graph id thunk-def args)]
     (let [graph' (update graph ::max-thunk-id inc)
-          id (::max-thunk-id graph')]
+          id (swap! next-id inc)]
       [id (reconcile-by-id graph' id thunk-def args)])))
 
 (defn thunk* [key thunk-def args-vector]
-  (let [[id graph'] (reconcile-thunk @*graph* *flashbacks* thunk-def key args-vector)]
-    (reset! *graph* graph')
-    (swap! *children* conj! [key id])
+  (let [[id graph'] (reconcile-thunk (current-graph)
+                                     (.-flashbacks (current-frame))
+                                     thunk-def
+                                     key
+                                     args-vector)]
+    (.set >-graph-< graph')
+    (append-child! key id)
     (Thunk. id)))
 
 (defn deref-or-value [thunk-or-value]
@@ -219,7 +251,8 @@
                                                   ::triggers (TLongHashSet.)
                                                   ::up-to-date up-to-date)
                                            (when-let [root-id (::root graph)]
-                                             {::root root-id}) ;; flashbacks
+                                             (doto (TObjectLongHashMap.)
+                                               (.put ::root root-id))) ;; flashbacks
                                            f ::root args-vector)
           _ (when-not first-run?
               (.remove up-to-date root-id))
@@ -228,17 +261,25 @@
                     (cond-> (not first-run?)
                       (traverse-graph root-id dirty-set))
                     (dissoc ::triggers
-                      ::dirty-set
-                      ::up-to-date))]
-      [graph (binding [*graph* (atom graph)]
-               (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))])))
+                            ::dirty-set
+                            ::up-to-date))
+          value (do
+                  (.set >-graph-< graph)
+                  15
+                  (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]
+      (.set >-graph-< nil)
+      [graph value])))
 
 (defn with-thunks-forbidden [f & args]
   (if *assert?*
-    (binding [*graph* nil
-              *dependencies* nil
-              *children* nil]
-      (apply f args))
+    (let [g (.get >-graph-<)
+          frame (current-frame)]
+      (try
+        (.set >-graph-< nil)
+        (.set >-frame-< nil)
+        (apply f args)
+        (finally
+          (.set >-frame-< frame)
+          (.set >-graph-< g))))
     (apply f args)))
-
 
