@@ -118,6 +118,19 @@
 
 (def deref-or-value t/deref-or-value)
 
+(defn flat [coll]
+  (into []
+        (fn flat-xf [r-f]
+          (fn
+            ([] (r-f))
+            ([s i]
+             (let [i (noria/deref-or-value i)]
+               (if (sequential? i)
+                 (transduce flat-xf r-f s i)
+                 (r-f s i))))
+            ([s] (r-f s))))
+        (noria/deref-or-value coll)))
+
 (defn thunk-def [params]
   (let [my-up-to-date? (:up-to-date? params =)
         my-compute (:compute params)
