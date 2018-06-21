@@ -243,7 +243,8 @@
                                             assert? false
                                             middleware identity}}]
   (binding [*assert?* assert?]
-    (let [first-run? (nil? (::root graph))
+    (let [old-graph (.get >-graph-<)
+          first-run? (nil? (::root graph))
           up-to-date (TLongHashSet.)
           [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
                                                   ::middleware middleware
@@ -267,7 +268,7 @@
                   (.set >-graph-< graph)
                   15
                   (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]
-      (.set >-graph-< nil)
+      (.set >-graph-< old-graph)
       [graph value])))
 
 (defn with-thunks-forbidden [f & args]
