@@ -131,6 +131,9 @@
             ([s] (r-f s))))
         (noria/deref-or-value coll)))
 
+(defn fmap [f & args]
+  (apply f (map deref-or-value args)))
+
 (defn thunk-def [params]
   (let [my-up-to-date? (:up-to-date? params =)
         my-compute (:compute params)
