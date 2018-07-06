@@ -168,13 +168,13 @@
           (t-conj! (::up-to-date graph) id)
           graph)
         (let [[[state' value'] ^Frame frame graph'] (new-frame
-                                              graph 
-                                              (if calc (.-children-by-keys calc) (TObjectLongHashMap.))
-                                              (compute thunk-def-wrapped
-                                                       (if calc
-                                                         (.-state calc)
-                                                         {:noria/id id})
-                                                       args))
+                                                     graph
+                                                     (if calc (.-children-by-keys calc) (TObjectLongHashMap.))
+                                                     (compute thunk-def-wrapped
+                                                              (if calc
+                                                                (.-state calc)
+                                                                {:noria/id id})
+                                                              args))
               deps' (.-deps frame)
               children' (.-children frame)
               children-by-keys' (.-children-by-keys frame)]
