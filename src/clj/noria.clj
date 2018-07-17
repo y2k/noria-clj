@@ -331,6 +331,7 @@
                 ::type type
                 ::node node-id) node-id]))
     (destroy! [this {::keys [node attrs] :as state}]
+      (swap! *callbacks* dissoc node)
       #_(doseq [[attr value] attrs]
         (case (get-data-type attr)
           :node (swap! *updates* conj! {:noria/update-type :set-attr
