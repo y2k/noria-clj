@@ -81,12 +81,19 @@
           false)))
     (recur s2 s1)))
 
+
 (defn t-contains? [^TLongHashSet s1 ^long e]
   (.contains s1 e))
 
 (defn t-conj! [^TLongHashSet s ^long e]
   (.add s e)
   s)
+
+(defn i-get [^clojure.data.int_map.PersistentIntMap m ^long k]
+  (.get ^clojure.data.int_map.INode (.-root m) k nil))
+
+(defn i-contains? [^clojure.data.int_map.PersistentIntSet s ^long k]
+  (.contains ^clojure.data.int_map.IntSet (.-int-set s) k))
 
 (defn append-child! [key ^long id]
   (let [^Frame frame (current-frame)]
@@ -100,7 +107,7 @@
       (t-conj! (.-deps frame) id))
     (assert (some? (current-graph)) {:error "Thunk deref outside of computation"
                                      :thunk-id id})
-    (let [v (.-value ^Calc (get (::values (current-graph)) id))]
+    (let [v (.-value ^Calc (i-get (::values (current-graph)) id))]
       (if (instance? Thunk v)
         (deref v)
         v)))
@@ -141,7 +148,7 @@
        (let [old-values (::values graph)
              middleware (::middleware graph)
              destroy-rec (fn destroy-rec [values ^long id]
-                           (let [^Calc c (get old-values id)
+                           (let [^Calc c (i-get old-values id)
                                  r (reduce-int-array destroy-rec
                                                      (dissoc! values id)
                                                      (.-children c))]
@@ -155,12 +162,12 @@
              (persistent! s))))))))
 
 (defn reconcile-by-id [graph ^long id thunk-def args]  
-  (let [^Calc calc (get (::values graph) id)
+  (let [^Calc calc (i-get (::values graph) id)
         thunk-def-wrapped ((::middleware graph) thunk-def)]
     (if (t-contains? (::up-to-date graph) id)
       graph
       (if (and (some? calc)
-               (not (contains? (::dirty-set graph) id))
+               (not (i-contains? (::dirty-set graph) id))
                (not (t-intersects? (::triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
@@ -214,12 +221,12 @@
     (deref thunk-or-value)
     thunk-or-value))
 
-(defn traverse-graph [graph id dirty-set]
-  (let [^Calc c (get (::values graph) id)]
-    (if (or (contains? dirty-set id)
+(defn traverse-graph [graph ^long id dirty-set]
+  (let [^Calc c (i-get (::values graph) id)]
+    (if (or (i-contains? dirty-set id)
             (t-intersects? (::triggers graph) (.-deps c)))
       (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-args c))
-            ^Calc c' (get (::values graph') id)]
+            ^Calc c' (i-get (::values graph') id)]
         (reduce-int-array
          (fn [g ^long id]
            (traverse-graph g id dirty-set))
@@ -284,3 +291,9 @@
           (.set >-graph-< g))))
     (apply f args)))
 
+(comment
+
+
+  
+  
+  )
