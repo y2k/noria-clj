@@ -124,20 +124,15 @@
   (pr s))
 
 (defn reduce-int-array [^clojure.lang.IFn$OLO f init ^TLongArrayList array]
-  (let [acc (volatile! init)]    
-    (.forEach
-     array
-     (reify gnu.trove.TLongProcedure
-       (^boolean execute [_ ^long id]
-        (let [acc' (.invokePrim f @acc id)]
+  (let [size (.size array)]
+    (loop [i 0
+           acc init]
+      (if (< i size)
+        (let [acc' (.invokePrim f acc (.get array i))]
           (if (reduced? acc')
-            (do
-              (vreset! acc @acc')
-              false)
-            (do
-              (vreset! acc acc')
-              true))))))
-    @acc))
+            @acc'
+            (recur (inc i) acc')))
+        acc))))
 
 (defn gc [graph old-children new-children]
   (let [^TLongHashSet ids (doto (TLongHashSet. (.toNativeArray ^TLongArrayList old-children))
