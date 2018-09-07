@@ -27,8 +27,6 @@
   (changed? [this old-value new-value] (not= old-value new-value))
   (destroy! [this state]))
 
-(defprotocol Dumb)
-
 (deftype Calc [state
                args
                value

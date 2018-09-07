@@ -169,6 +169,7 @@
   (::unordered? (meta new-exprs)))
 
 (def node
+ (with-meta
   (reify t/ThunkDef
     (up-to-date? [this state old-arg new-arg] (= old-arg new-arg))
     (compute [this state [type attrs]]
@@ -356,8 +357,8 @@
           nil))
       (swap! *updates* conj! {:noria/update-type :destroy
                               :noria/node node}))
-    (changed? [this old-value new-value] (not= old-value new-value))
-    t/Dumb))
+    (changed? [this old-value new-value] (not= old-value new-value)))
+    {:noria/primitive true}))
 
 (defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
                                        :or {dirty-set (i/int-set)
