@@ -154,11 +154,11 @@
              (recur (destroy-rec s (.next iterator)))
              (persistent! s))))))))
 
-(defn reconcile-by-id [graph ^long id thunk-def args]  
-  (let [^Calc calc (i-get (::values graph) id)
-        thunk-def-wrapped ((::middleware graph) thunk-def)]
-    (if (t-contains? (::up-to-date graph) id)
-      graph
+(defn reconcile-by-id [graph ^long id thunk-def args]
+  (if (t-contains? (::up-to-date graph) id)
+    graph
+    (let [^Calc calc (i-get (::values graph) id)
+          thunk-def-wrapped ((::middleware graph) thunk-def)]
       (if (and (some? calc)
                (not (i-contains? (::dirty-set graph) id))
                (not (t-intersects? (::triggers graph) (.-deps calc)))
