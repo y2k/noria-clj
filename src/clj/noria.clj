@@ -35,6 +35,9 @@
 (defn get-data-type [k]
   (or (::data-type (@schema k)) :simple-value))
 
+(defn get-seq-kind [k]
+  (or (::seq-kind (@schema k)) :vector))
+
 (defn defattr [attr data]
   (swap! schema assoc attr data))
 
