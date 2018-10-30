@@ -30,24 +30,28 @@
 (s/def :noria/update (s/multi-spec update-spec :noria/update-type))
 
 
-(defonce schema (atom {}))
+(defonce schema (atom {:constructors {}
+                       :attrs {}}))
 
-(defn get-data-type [k]
-  (or (::data-type (@schema k)) :simple-value))
+(defn data-type [attr]
+  (or (::data-type (get-in @schema [:attrs attr])) :simple-value))
 
-(defn get-seq-kind [k]
-  (or (::seq-kind (@schema k)) :vector))
+(defn seq-kind [attr]
+  (or (::seq-kind (get-in @schema [:attrs attr])) :vector))
 
 (defn defattr [attr data]
-  (swap! schema assoc attr data))
+  (swap! schema assoc-in [:attrs attr] data))
 
-(defonce constructor-parameters (atom {}))
+(defn constructor-parameters [node-type]
+  (get-in @schema [:constructors node-type :attrs] #{}))
 
-(defn get-constructor-parameters [k]
-  (get @constructor-parameters k #{}))
+(defn default-values [node-type]
+  (get-in @schema [:constructors node-type :default-values] {}))
 
-(defn defconstructor [node-type attrs]
-  (swap! constructor-parameters assoc node-type attrs))
+(defn defconstructor [node-type {:keys [attrs default-values] :as opts}]
+  (swap! schema assoc-in [:constructors node-type] {:attrs attrs
+                                                    :default-values default-values}))
+
 
 (defn update-order [parent-node attr ^TLongArrayList old-nodes ^TLongArrayList new-nodes]
   (if (= old-nodes new-nodes)
@@ -178,7 +182,7 @@
     (compute [this state [type attrs]]
       (let [old-type (::type state)
             old-node (::node state)
-            constructor-params (get-constructor-parameters type)
+            constructor-params (constructor-parameters type)
             reduce-keys-of-two-maps (fn [r-f state m1 m2]
                                       (as-> state <>
                                         (reduce-kv (fn [state a v]
@@ -222,7 +226,7 @@
                   (let [new-value (t/deref-or-value new-value)
                         data-type (if (or (fn? new-value) (fn? old-value))
                                     :callback
-                                    (get-data-type attr))]
+                                    (data-type attr))]
                     (case data-type
                       (:node :simple-value)
                       (if (not= old-value new-value)
@@ -284,7 +288,7 @@
                               (let [new-value (t/deref-or-value value)
                                     data-type (if (fn? new-value)
                                                 :callback
-                                                (get-data-type attr))]
+                                                (data-type attr))]
                                 (case data-type
                                   (:node :simple-value)
                                   (if (contains? constructor-params attr)
@@ -347,7 +351,7 @@
     (destroy! [this {::keys [node attrs] :as state}]
       (swap! *callbacks* dissoc node)
       #_(doseq [[attr value] attrs]
-        (case (get-data-type attr)
+        (case (data-type attr)
           :node (swap! *updates* conj! {:noria/update-type :set-attr
                                         :noria/node node
                                         :noria/attr attr
