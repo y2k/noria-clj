@@ -40,11 +40,28 @@
                 ^TObjectLongHashMap children-by-keys
                 ^TLongArrayList children])
 
+(defrecord Graph [middleware
+                  dirty-set
+                  triggers
+                  up-to-date
+                  values
+                  max-thunk-id
+                  root])
+
+(defn update-values [^Graph g f]
+  (Graph. (.-middleware g)
+          (.-dirty-set g)
+          (.-triggers g)
+          (.-up-to-date g)
+          (f (.-values g))
+          (.-max-thunk-id g)
+          (.-root g)))
+
 (def ^{:tag 'ThreadLocal} >-frame-< (ThreadLocal.))
 (defn current-frame ^Frame [] (.get >-frame-<))
 
 (def ^{:tag 'ThreadLocal} >-graph-< (ThreadLocal.))
-(defn current-graph [] (.get >-graph-<))
+(defn ^Graph current-graph [] (.get >-graph-<))
 
 (def next-id (atom 0))
 
@@ -105,7 +122,7 @@
       (t-conj! (.-deps frame) id))
     (assert (some? (current-graph)) {:error "Thunk deref outside of computation"
                                      :thunk-id id})
-    (let [v (.-value ^Calc (i-get (::values (current-graph)) id))]
+    (let [v (.-value ^Calc (i-get (.-values (current-graph)) id))]
       (if (instance? Thunk v)
         (deref v)
         v)))
@@ -132,14 +149,13 @@
             (recur (inc i) acc')))
         acc))))
 
-(defn gc [graph old-children new-children]
+(defn gc [^Graph graph old-children new-children]
   (let [^TLongHashSet ids (doto (TLongHashSet. (.toNativeArray ^TLongArrayList old-children))
                             (.removeAll (.toNativeArray ^TLongArrayList new-children)))]
-    (update
-     graph ::values
+    (update-values graph
      (fn [values]
-       (let [old-values (::values graph)
-             middleware (::middleware graph)
+       (let [old-values (.-values graph)
+             middleware (.-middleware graph)
              destroy-rec (fn destroy-rec [values ^long id]
                            (let [^Calc c (i-get old-values id)
                                  r (reduce-int-array destroy-rec
@@ -154,48 +170,49 @@
              (recur (destroy-rec s (.next iterator)))
              (persistent! s))))))))
 
-(defn reconcile-by-id [graph ^long id thunk-def args]
-  (if (t-contains? (::up-to-date graph) id)
+(defn ^Graph reconcile-by-id [^Graph graph ^long id thunk-def args]
+  (if (t-contains? (.-up-to-date graph) id)
     graph
-    (let [^Calc calc (i-get (::values graph) id)
-          thunk-def-wrapped ((::middleware graph) thunk-def)]
+    (let [^Calc calc (i-get (.-values graph) id)
+          thunk-def-wrapped ((.-middleware graph) thunk-def)]
       (if (and (some? calc)
-               (not (i-contains? (::dirty-set graph) id))
-               (not (t-intersects? (::triggers graph) (.-deps calc)))
+               (not (i-contains? (.-dirty-set graph) id))
+               (not (t-intersects? (.-triggers graph) (.-deps calc)))
                (identical? thunk-def (.-thunk-def calc))
                (up-to-date? thunk-def-wrapped (.-state calc) (.-args calc) args))
         (do
-          (t-conj! (::up-to-date graph) id)
+          (t-conj! (.-up-to-date graph) id)
           graph)
-        (let [[[state' value'] ^Frame frame graph'] (new-frame
-                                                     graph
-                                                     (if calc (.-children-by-keys calc) (TObjectLongHashMap.))
-                                                     (compute thunk-def-wrapped
-                                                              (if calc
-                                                                (.-state calc)
-                                                                {:noria/id id})
-                                                              args))
+        (let [[[state' value'] ^Frame frame ^Graph graph'] (new-frame
+                                                            graph
+                                                            (if calc (.-children-by-keys calc) (TObjectLongHashMap.))
+                                                            (compute thunk-def-wrapped
+                                                                     (if calc
+                                                                       (.-state calc)
+                                                                       {:noria/id id})
+                                                                     args))
               deps' (.-deps frame)
               children' (.-children frame)
               children-by-keys' (.-children-by-keys frame)]
-          (t-conj! (::up-to-date graph') id)
+          (t-conj! (.-up-to-date graph') id)
+          (when (and (some? calc)
+                           (changed? thunk-def-wrapped (.-value calc) value'))
+            (t-conj! (.-triggers graph') id))
           (-> graph'
               (cond-> (and calc (not= (.-children calc) children'))
                 (gc (.-children calc) children'))
-              (update ::values assoc id
-                      (Calc. state' args value' thunk-def deps'
-                             children-by-keys'
-                             children'))
-              (cond-> (and (some? calc)
-                           (changed? thunk-def-wrapped (.-value calc) value'))
-                (update ::triggers t-conj! id))))))))
+              (update-values (fn [values]
+                               (assoc values id
+                                      (Calc. state' args value' thunk-def deps'
+                                             children-by-keys'
+                                             children'))))))))))
 
 (defn reconcile-thunk [graph ^TObjectLongHashMap flashbacks thunk-def key args]
   (if-let [id (when flashbacks
                 (when (.containsKey flashbacks key)
                   (.get flashbacks key)))]
     [id (reconcile-by-id graph id thunk-def args)]
-    (let [graph' (update graph ::max-thunk-id inc)
+    (let [graph' (update graph :max-thunk-id inc)
           id (swap! next-id inc)]
       [id (reconcile-by-id graph' id thunk-def args)])))
 
@@ -214,12 +231,12 @@
     (deref thunk-or-value)
     thunk-or-value))
 
-(defn traverse-graph [graph ^long id dirty-set]
-  (let [^Calc c (i-get (::values graph) id)]
+(defn traverse-graph [^Graph graph ^long id dirty-set]
+  (let [^Calc c (i-get (.-values graph) id)]
     (if (or (i-contains? dirty-set id)
-            (t-intersects? (::triggers graph) (.-deps c)))
-      (let [graph' (reconcile-by-id graph id (.-thunk-def c) (.-args c))
-            ^Calc c' (i-get (::values graph') id)]
+            (t-intersects? (.-triggers graph) (.-deps c)))
+      (let [graph' ^Graph (reconcile-by-id graph id (.-thunk-def c) (.-args c))
+            ^Calc c' (i-get (.-values graph') id)]
         (reduce-int-array
          (fn [g ^long id]
            (traverse-graph g id dirty-set))
@@ -227,47 +244,48 @@
          (.-children c')))
       (reduce-int-array
        (fn [g ^long c-id]
-         (let [g' (traverse-graph g c-id dirty-set)]
+         (let [g' ^Graph (traverse-graph g c-id dirty-set)]
            (if (and (t-contains? (.-deps c) c-id)
-                    (t-contains? (::triggers g') c-id))
+                    (t-contains? (.-triggers g') c-id))
              (reduced (traverse-graph g' id dirty-set))
              g')))
        graph
        (.-children c)))))
 
-(def graph-0 {::values (i/int-map)
-              ::max-thunk-id 0})
+(def graph-0 (Graph. nil nil nil nil (i/int-map) 0 nil))
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
+(defn evaluate [^Graph graph f args-vector & {:keys [dirty-set middleware assert?]
                                        :or {dirty-set (i/int-set)
                                             assert? false
                                             middleware identity}}]
   (binding [*assert?* assert?]
     (let [old-graph (.get >-graph-<)
-          first-run? (nil? (::root graph))
+          ^Graph graph (or graph graph-0)
+          first-run? (nil? (.-root graph))
           up-to-date (TLongHashSet.)
-          [root-id graph] (reconcile-thunk (assoc (or graph graph-0)
-                                                  ::middleware middleware
-                                                  ::dirty-set dirty-set
-                                                  ::triggers (TLongHashSet.)
-                                                  ::up-to-date up-to-date)
-                                           (when-let [root-id (::root graph)]
+          [root-id graph] (reconcile-thunk (assoc graph
+                                                  :middleware middleware
+                                                  :dirty-set dirty-set
+                                                  :triggers (TLongHashSet.)
+                                                  :up-to-date up-to-date)
+                                           (when-let [root-id (.-root graph)]
                                              (doto (TObjectLongHashMap.)
                                                (.put ::root root-id))) ;; flashbacks
                                            f ::root args-vector)
           _ (when-not first-run?
               (.remove up-to-date root-id))
           graph (-> graph
-                    (assoc ::root root-id)
+                    (assoc :root root-id)
                     (cond-> (not first-run?)
                       (traverse-graph root-id dirty-set))
-                    (dissoc ::triggers
-                            ::dirty-set
-                            ::up-to-date))
+                    (assoc
+                     :triggers nil
+                     :dirty-set nil
+                     :up-to-date nil))
           value (do
                   (.set >-graph-< graph)
                   15
-                  (deref-or-value (.-value ^Calc (get-in graph [::values root-id]))))]
+                  (deref-or-value (.-value ^Calc (get-in graph [:values root-id]))))]
       (.set >-graph-< old-graph)
       [graph value])))
 
