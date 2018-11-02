@@ -34,16 +34,19 @@
                        :attrs {}}))
 
 (defn data-type [attr]
-  (or (::data-type (get-in @schema [:attrs attr])) :simple-value))
+  (or (::data-type (-> @schema (get :attrs) (get attr))) :simple-value))
 
 (defn seq-kind [attr]
-  (or (::seq-kind (get-in @schema [:attrs attr])) :vector))
+  (or (::seq-kind (-> @schema (get :attrs) (get attr))) :vector))
 
 (defn defattr [attr data]
   (swap! schema assoc-in [:attrs attr] data))
 
 (defn constructor-parameters [node-type]
-  (get-in @schema [:constructors node-type :attrs] #{}))
+  (-> @schema
+      (get :constructors)
+      (get node-type)
+      (get :attrs #{})))
 
 (defn default-values [node-type]
   (get-in @schema [:constructors node-type :default-values] {}))
@@ -240,7 +243,7 @@
                       
                       :callback
                       (do
-                        (swap! *callbacks* assoc-in [node-id (if (keyword? attr) (name attr) attr)] new-value)
+                        (swap! *callbacks* update node-id assoc (name attr) new-value)
                         (cond
                           (and (nil? old-value) (nil? new-value))
                           state
@@ -302,7 +305,7 @@
                                   
                                   :callback
                                   (do
-                                    (swap! *callbacks* assoc-in [node-id (if (keyword? attr) (name attr) attr)] new-value)
+                                    (swap! *callbacks* update node-id assoc (name attr) new-value)
                                     (let [cb (if (:noria/sync (meta new-value))
                                                :noria-handler-sync
                                                :noria-handler-async)]
