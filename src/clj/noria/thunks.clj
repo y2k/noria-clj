@@ -62,38 +62,39 @@
                                             assert? false
                                             middleware identity}}]
   (let [middleware-impl (reify java.util.function.Function
-                                 (apply [this thing]
-                                   (let [thing (middleware thing)]
-                                     (reify noria.NoriaRT$ThunkDef
-                                       (compute [this ctx state arg]
-                                                (let [old-ctx (.get >-ctx-<)]
-                                                  (.set >-ctx-< ctx)
-                                                  (let [[state value] (compute thing (if (nil? state)
-                                                                                       {:noria/id (.-id (.-frame ^noria.NoriaRT$Context ctx))}
-                                                                                       state) arg)
-                                                        res (noria.NoriaRT$ThunkDef$Result. state value)]
-                                                    (.set >-ctx-< old-ctx)
-                                                    res)))
-                                       (isUpToDate [this state old new]
-                                         (up-to-date? thing state old new))
-                                       (hasChanged [this old new]
-                                          (changed? thing old new))
-                                       (destroy [this state]
-                                          (destroy! thing state))))))
-          old-ctx (.get >-ctx-<)
-          f-impl (reify ThunkDef
-                   (changed? [this old new]
-                             (changed? f old new))
-                   (destroy! [this state]
-                     (destroy! f state))
-                   (compute [this state arg]
-                     (deref-or-value (compute f state arg)))
-                   (up-to-date? [this state old new]
-                     (up-to-date? f state old new)))
-          result (if graph
-                   (noria.NoriaRT/evaluate ^noria.NoriaRT$DAG graph ^java.util.Set dirty-set ^java.util.function.Function middleware-impl)
-                   (noria.NoriaRT/evaluate ^Object f-impl ^Object args-vector ^java.util.function.Function middleware-impl))]
-      (.set >-ctx-< old-ctx)
-      [(.-graph result) (.-value result)]))
+                          (apply [this thing]
+                            (let [thing (middleware thing)]
+                              (reify noria.NoriaRT$ThunkDef
+                                (compute [this ctx state arg]
+                                  (let [old-ctx (.get >-ctx-<)]
+                                    (.set >-ctx-< ctx)
+                                    (let [[state value] (compute thing (if (nil? state)
+                                                                         {:noria/id (.-id (.-frame ^noria.NoriaRT$Context ctx))}
+                                                                         state) arg)
+                                          res (noria.NoriaRT$ThunkDef$Result. state value)]
+                                      (.set >-ctx-< old-ctx)
+                                      res)))
+                                (isUpToDate [this state old new]
+                                  (up-to-date? thing state old new))
+                                (hasChanged [this old new]
+                                  (changed? thing old new))
+                                (destroy [this state]
+                                  (destroy! thing state))))))
+        old-ctx (.get >-ctx-<)
+        f-impl (with-meta (reify ThunkDef
+                            (changed? [this old new]
+                              (changed? f old new))
+                            (destroy! [this state]
+                              (destroy! f state))
+                            (compute [this state arg]
+                              (deref-or-value (compute f state arg)))
+                            (up-to-date? [this state old new]
+                              (up-to-date? f state old new)))
+                 (meta f))
+        result (if graph
+                 (noria.NoriaRT/evaluate ^noria.NoriaRT$DAG graph ^java.util.Set dirty-set ^java.util.function.Function middleware-impl)
+                 (noria.NoriaRT/evaluate ^Object f-impl ^Object args-vector ^java.util.function.Function middleware-impl))]
+    (.set >-ctx-< old-ctx)
+    [(.-graph result) (.-value result)]))
 
 
