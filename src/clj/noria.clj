@@ -152,11 +152,11 @@
     (assert (some? my-compute))
     (reify t/ThunkDef
       (up-to-date? [this state old-arg new-arg]
-        (t/with-thunks-forbidden my-up-to-date? old-arg new-arg))
+        (my-up-to-date? old-arg new-arg))
       (compute [this state args]
         (my-compute state args))
       (changed? [this old-value new-value]
-        (t/with-thunks-forbidden my-changed? old-value new-value))
+        (my-changed? old-value new-value))
       (destroy! [this state]
         (my-destroy! state)))))
 
@@ -370,20 +370,20 @@
     (changed? [this old-value new-value] (not= old-value new-value)))
     {:noria/primitive true}))
 
-(defn evaluate [graph f args-vector & {:keys [dirty-set middleware assert?]
-                                       :or {dirty-set (i/int-set)
-                                            assert? false
-                                            middleware identity}}]
+(defn evaluate [{::keys [graph next-node callbacks]} f args-vector & {:keys [dirty-set middleware assert?]
+                                                                      :or {dirty-set (i/int-set)
+                                                                           assert? false
+                                                                           middleware identity}}]
   (binding [*updates* (atom (transient []))
-            *callbacks* (atom (or (::callbacks graph) {}))
-            *next-node* (atom (or (::next-node graph) 0))]
+            *callbacks* (atom (or callbacks {}))
+            *next-node* (atom (or next-node 0))]
     (let [[graph value] (t/evaluate graph f args-vector
                                     :dirty-set dirty-set
                                     :middleware middleware
                                     :assert? assert?)]
-      [(assoc graph
-              ::next-node @*next-node*
-              ::callbacks @*callbacks*)
+      [{::graph graph
+        ::next-node @*next-node*
+        ::callbacks @*callbacks*}
        (persistent! @*updates*)
        value])))
 
