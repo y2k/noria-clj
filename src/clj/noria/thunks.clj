@@ -87,7 +87,8 @@
                             (destroy! [this state]
                               (destroy! f state))
                             (compute [this state arg]
-                              (deref-or-value (compute f state arg)))
+                                     (let [[state value] (compute f state arg)]
+                                       [state (deref-or-value value)]))
                             (up-to-date? [this state old new]
                               (up-to-date? f state old new)))
                  (meta f))
