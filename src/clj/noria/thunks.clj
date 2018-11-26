@@ -75,9 +75,9 @@
                                       (.set >-ctx-< old-ctx)
                                       res)))
                                 (isUpToDate [this state old new]
-                                  (up-to-date? thing state old new))
+                                  (boolean (up-to-date? thing state old new)))
                                 (hasChanged [this old new]
-                                  (changed? thing old new))
+                                  (boolean (changed? thing old new)))
                                 (destroy [this state]
                                   (destroy! thing state))))))
         old-ctx (.get >-ctx-<)
