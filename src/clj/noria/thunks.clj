@@ -92,10 +92,16 @@
                             (up-to-date? [this state old new]
                               (up-to-date? f state old new)))
                  (meta f))
-        result (if graph
+        result (cond
+                 (nil? f)
+                 (noria.NoriaRT/extinct (noria.NoriaRT$Context. ^noria.NoriaRT$DAG graph ^java.util.Set (gnu.trove.TLongHashSet.) ^java.util.function.Function middleware-impl)
+                                        (.-root ^noria.NoriaRT$DAG graph))
+                 (some? graph)
                  (noria.NoriaRT/evaluate ^noria.NoriaRT$DAG graph ^java.util.Set dirty-set ^java.util.function.Function middleware-impl)
+                 :else
                  (noria.NoriaRT/evaluate ^Object f-impl ^Object args-vector ^java.util.function.Function middleware-impl))]
     (.set >-ctx-< old-ctx)
-    [(.-graph result) (.-value result)]))
+    (when (some? result)
+      [(.-graph result) (.-value result)])))
 
 
