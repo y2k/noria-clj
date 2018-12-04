@@ -304,19 +304,21 @@
                                                      :noria/attr attr})])
                                   
                                   :callback
-                                  (do
-                                    (swap! *callbacks* update node-id assoc (name attr) new-value)
-                                    (let [cb (if (:noria/sync (meta new-value))
-                                               :noria-handler-sync
-                                               :noria-handler-async)]
-                                      (if (contains? constructor-params attr)
-                                        [(assoc! attrs attr cb) (assoc! constr attr cb) updates]
-                                        [(assoc! attrs attr cb)
-                                         constr
-                                         (conj! updates {:noria/update-type :set-attr
-                                                         :noria/node node-id
-                                                         :noria/attr attr
-                                                         :noria/value cb})])))
+                                  (if (some? new-value)
+                                    (do
+                                      (swap! *callbacks* update node-id assoc (name attr) new-value)
+                                      (let [cb (if (:noria/sync (meta new-value))
+                                                 :noria-handler-sync
+                                                 :noria-handler-async)]
+                                        (if (contains? constructor-params attr)
+                                          [(assoc! attrs attr cb) (assoc! constr attr cb) updates]
+                                          [(assoc! attrs attr cb)
+                                           constr
+                                           (conj! updates {:noria/update-type :set-attr
+                                                           :noria/node node-id
+                                                           :noria/attr attr
+                                                           :noria/value cb})])))
+                                    [attrs constr updates])
                                   :nodes-seq
                                   (let [new-nodes (init-children new-value)]
                                     (if (contains? constructor-params attr)
