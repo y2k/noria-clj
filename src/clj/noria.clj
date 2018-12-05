@@ -117,14 +117,48 @@
         key (or key `(quote ~(gensym)))]
     `(t/thunk* ~key ~thunk-def [~@args])))
 
+(def closure
+  (reify t/ThunkDef
+    (compute [_ state [f env]]
+      [state (f)])
+    (up-to-date? [_ state [_ old-env] [_ new-env]]
+      (= old-env new-env))
+    (changed? [_ old-value new-value] (not= old-value new-value))
+    (destroy! [_ state])))
+
 (s/def ::-<< (s/cat :key-spec ::key-spec
                     :expr (s/* any?)))
-
 (defmacro -<< [& stuff]
+  (require '[clojure.tools.analyzer.jvm :as an-jvm])
   (let [{{key :key} :key-spec
          :keys [expr]} (s/conform ::-<< stuff)
-        key (or key `(quote ~(gensym)))]
-    `(t/thunk* ~key (fn [] ~@expr) [])))
+        key (or key `(quote ~(gensym)))
+        analyze (resolve 'clojure.tools.analyzer.jvm/analyze)
+        empty-env (resolve 'clojure.tools.analyzer.jvm/empty-env)
+        ast (analyze expr (assoc (empty-env)
+                                 :locals (into {}
+                                               (map (fn [[sym binding]]
+                                                      [sym {:op :const,
+                                                            :env (empty-env)
+                                                            ::closure? (instance? clojure.lang.Compiler$LocalBinding binding)}]))
+                                               &env)))
+        nodes (tree-seq (comp seq :children)
+                        (fn [node]
+                          (mapcat (fn [x]
+                                    (if (map? x)
+                                      [x]
+                                      x))
+                                  ((apply juxt (:children node)) node)))
+                        ast)
+        env-map-expr (into {}
+                           (comp
+                            (filter #(= (:op %) :local))
+                            (filter (fn [{:keys [form env]}]
+                                      (::closure? (get (:locals env) form))))
+                            (map (fn [{sym :form}]
+                                   [`(quote ~sym) sym])))
+                           nodes)]
+    `(t/thunk* ~key closure [(fn [] ~@expr) ~env-map-expr])))
 
 (def deref-or-value t/deref-or-value)
 

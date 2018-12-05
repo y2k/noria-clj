@@ -13,7 +13,7 @@
 
 (defprotocol ThunkDef
   (destroy! [this state])
-  (compute [this state arg])
+  (compute [this state arg]) ;; => [state' value]
   (up-to-date? [this state old-arg new-arg])
   (changed? [this old-value new-value]))
 
