@@ -12,7 +12,7 @@ public class NoriaRT {
 
   public static final TObjectLongHashMap<Object> EMPTY_FLASHBACKS = new TObjectLongHashMap<>();
   public static final IntMap<Void> EMPTY_INT_SET = new IntMap<>();
-  public static final DAG GRAPH0 = new DAG(new IntMap<>(), new IntMap<>(), 0, 1);
+  public static final DAG EMPTY_DAG = new DAG(new IntMap<>(), new IntMap<>(), 0, 1);
 
   public static class Calc {
     public final Object state;
@@ -291,25 +291,21 @@ public class NoriaRT {
 
   @SuppressWarnings("UnusedReturnValue")
   public static long reconcile(Context ctx, Object thunkDef, Object key, Object arg) {
-    if (ctx.frame.flashbacks.containsKey(key)) {
-      long id = ctx.frame.flashbacks.get(key);
-      appendChild(ctx, key, id);
-      reconcileById(ctx, id, thunkDef, arg);
-      return id;
-    }
-    else {
-      long id = ctx.nextId++;
-      appendChild(ctx, key, id);
-      reconcileById(ctx, id, thunkDef, arg);
-      return id;
-    }
+    long id =  ctx.frame.flashbacks.containsKey(key) ?
+               ctx.frame.flashbacks.get(key) : ctx.nextId++;
+    appendChild(ctx, key, id);
+    reconcileById(ctx, id, thunkDef, arg);
+    return id;
   }
 
   @SuppressWarnings("unused")
   public static Result evaluate(Object thunkDef, Object arg, Function<Object, ThunkDef> middleware) {
-    Context context = new Context(GRAPH0, new TLongHashSet(), middleware);
+    Context context = new Context(EMPTY_DAG, new TLongHashSet(), middleware);
     reconcile(context, thunkDef, ROOT_KEY, arg);
-    return new Result(new DAG(context.values.forked(), context.dependants.forked(), context.root, context.nextId),
+    return new Result(new DAG(context.values.forked(),
+                              context.dependants.forked(),
+                              context.root,
+                              context.nextId),
                       context.values.get(context.root, null).value);
   }
 
