@@ -291,6 +291,7 @@ public class NoriaRT {
 
   @SuppressWarnings("UnusedReturnValue")
   public static long reconcile(Context ctx, Object thunkDef, Object key, Object arg) {
+    assert !ctx.frame.childrenByKeys.containsKey(key) : "key " + key + " is not unique";
     long id =  ctx.frame.flashbacks.containsKey(key) ?
                ctx.frame.flashbacks.get(key) : ctx.nextId++;
     appendChild(ctx, key, id);
