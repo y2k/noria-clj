@@ -17,7 +17,7 @@ public class NoriaRT {
   public static class Calc {
     public final Object state;
     public final Object arg;
-    public final Object thunkDef;
+    public final Object reconciler;
     public final TLongHashSet deps;
     public final long parentId;
     public final TObjectLongHashMap<Object> childrenByKeys;
@@ -25,14 +25,14 @@ public class NoriaRT {
 
     public Calc(Object state,
                 Object arg,
-                Object thunkDef,
+                Object reconciler,
                 TLongHashSet deps,
                 long parentId,
                 TObjectLongHashMap<Object> childrenByKeys,
                 TLongLongHashMap childrenOrder) {
       this.state = state;
       this.arg = arg;
-      this.thunkDef = thunkDef;
+      this.reconciler = reconciler;
       this.deps = deps;
       this.parentId = parentId;
       this.childrenByKeys = childrenByKeys;
@@ -146,7 +146,7 @@ public class NoriaRT {
       return true;
     });
     ctx.values = ctx.values.remove(id);
-    ctx.middleware.apply(calc.thunkDef).destroy(calc.state);
+    ctx.middleware.apply(calc.reconciler).destroy(calc.state);
     calc.childrenOrder.forEachKey(child -> {
       extinct(ctx, child);
       return true;
@@ -163,16 +163,16 @@ public class NoriaRT {
     });
   }
 
-  public static void reconcileById(Context ctx, long id, Object thunkDef, Object arg) {
+  public static void reconcileById(Context ctx, long id, Object reconciler, Object arg) {
     if (ctx.upToDate.contains(id)) {
       return;
     }
     Calc calc = ctx.values.get(id, null);
-    Reconciler reconcilerImpl = ctx.middleware.apply(thunkDef);
+    Reconciler reconcilerImpl = ctx.middleware.apply(reconciler);
     if (calc == null ||
         ctx.dirtySet.contains(id) ||
         intersects(ctx.triggers, calc.deps) ||
-        thunkDef != calc.thunkDef ||
+        reconciler != calc.reconciler ||
         !reconcilerImpl.needsReconcile(calc.state, arg)) {
       Frame currentFrame = ctx.frame;
       Frame newFrame = new Frame(calc == null ? EMPTY_FLASHBACKS : calc.childrenByKeys, id);
@@ -189,7 +189,7 @@ public class NoriaRT {
       }
       Calc newCalc = new Calc(newState,
                               arg,
-                              thunkDef,
+                              reconciler,
                               newFrame.deps,
                               currentFrame.id,
                               newFrame.childrenByKeys,
@@ -272,19 +272,19 @@ public class NoriaRT {
   }
 
   @SuppressWarnings("UnusedReturnValue")
-  public static long reconcile(Context ctx, Object thunkDef, Object key, Object arg) {
+  public static long reconcile(Context ctx, Object reconciler, Object key, Object arg) {
     assert !ctx.frame.childrenByKeys.containsKey(key) : "key " + key + " is not unique";
     long id =  ctx.frame.flashbacks.containsKey(key) ?
                ctx.frame.flashbacks.get(key) : ctx.nextId++;
     appendChild(ctx, key, id);
-    reconcileById(ctx, id, thunkDef, arg);
+    reconcileById(ctx, id, reconciler, arg);
     return id;
   }
 
   @SuppressWarnings("unused")
-  public static Result evaluate(Object thunkDef, Object arg, Function<Object, Reconciler> middleware) {
+  public static Result evaluate(Object reconciler, Object arg, Function<Object, Reconciler> middleware) {
     Context context = new Context(EMPTY_DAG, new TLongHashSet(), middleware);
-    reconcile(context, thunkDef, ROOT_KEY, arg);
+    reconcile(context, reconciler, ROOT_KEY, arg);
     return new Result(new DAG(context.values.forked(),
                               context.dependants.forked(),
                               context.root,
@@ -316,7 +316,7 @@ public class NoriaRT {
       Calc calc = ctx.values.get(id, null);
       if (calc != null) {
         ctx.frame = new Frame(EMPTY_FLASHBACKS, calc.parentId);
-        reconcileById(ctx, id, calc.thunkDef, calc.arg);
+        reconcileById(ctx, id, calc.reconciler, calc.arg);
         ctx.newTriggers.forEach((trigger) -> {
           IntMap<Void> ds = graph.dependants.get(trigger, null);
           if (ds != null) {
