@@ -17,7 +17,6 @@ public class NoriaRT {
   public static class Calc {
     public final Object state;
     public final Object arg;
-    public final Object value;
     public final Object thunkDef;
     public final TLongHashSet deps;
     public final long parentId;
@@ -26,7 +25,6 @@ public class NoriaRT {
 
     public Calc(Object state,
                 Object arg,
-                Object value,
                 Object thunkDef,
                 TLongHashSet deps,
                 long parentId,
@@ -34,7 +32,6 @@ public class NoriaRT {
                 TLongLongHashMap childrenOrder) {
       this.state = state;
       this.arg = arg;
-      this.value = value;
       this.thunkDef = thunkDef;
       this.deps = deps;
       this.parentId = parentId;
@@ -77,7 +74,7 @@ public class NoriaRT {
   public static final Object ROOT_KEY = new Object();
 
   public static class Context {
-    public final Function<Object, ThunkDef> middleware;
+    public final Function<Object, Reconciler> middleware;
     public final TLongHashSet dirtySet;
     public final TLongHashSet triggers;
     public final TLongHashSet newTriggers;
@@ -89,7 +86,7 @@ public class NoriaRT {
     public long root;
     public long nextId;
 
-    public Context(DAG graph, TLongHashSet dirtySet, Function<Object, ThunkDef> middleware) {
+    public Context(DAG graph, TLongHashSet dirtySet, Function<Object, Reconciler> middleware) {
       this.middleware = middleware;
       this.dirtySet = dirtySet;
       triggers = new TLongHashSet();
@@ -171,18 +168,18 @@ public class NoriaRT {
       return;
     }
     Calc calc = ctx.values.get(id, null);
-    ThunkDef thunkDefImpl = ctx.middleware.apply(thunkDef);
+    Reconciler reconcilerImpl = ctx.middleware.apply(thunkDef);
     if (calc == null ||
         ctx.dirtySet.contains(id) ||
         intersects(ctx.triggers, calc.deps) ||
         thunkDef != calc.thunkDef ||
-        !thunkDefImpl.isUpToDate(calc.state, calc.arg, arg)) {
+        !reconcilerImpl.needsReconcile(calc.state, arg)) {
       Frame currentFrame = ctx.frame;
       Frame newFrame = new Frame(calc == null ? EMPTY_FLASHBACKS : calc.childrenByKeys, id);
       ctx.frame = newFrame;
-      ThunkDef.Result result = thunkDefImpl.compute(ctx, calc == null ? null : calc.state, arg);
+      Object newState = reconcilerImpl.reconcile(ctx, calc == null ? null : calc.state, arg);
       ctx.upToDate.add(id);
-      if (calc != null && thunkDefImpl.hasChanged(calc.value, result.value)) {
+      if (calc != null && reconcilerImpl.shouldPropagate(calc.state, newState)) {
         ctx.triggers.add(id);
         ctx.newTriggers.add(id);
       }
@@ -190,9 +187,8 @@ public class NoriaRT {
       if (calc != null) {
         gc(ctx, calc.childrenOrder, newFrame.childrenOrder);
       }
-      Calc newCalc = new Calc(result.state,
+      Calc newCalc = new Calc(newState,
                               arg,
-                              result.value,
                               thunkDef,
                               newFrame.deps,
                               currentFrame.id,
@@ -251,34 +247,20 @@ public class NoriaRT {
 
   ////////////////////////////////        API       /////////////////////////////////////////////
 
-  public interface ThunkDef {
-    class Result {
-      final Object state;
-      final Object value;
-
-      public Result(Object state, Object value) {
-        this.state = state;
-        this.value = value;
-      }
-    }
-
-    boolean isUpToDate(Object state, Object oldArg, Object newArg);
-
-    Result compute(NoriaRT.Context context, Object state, Object arg);
-
-    boolean hasChanged(Object oldValue, Object newValue);
-
+  public interface Reconciler {
+    boolean needsReconcile(Object state, Object newArg);
+    Object reconcile(NoriaRT.Context context, Object state, Object arg);
+    boolean shouldPropagate(Object oldState, Object newState);
     void destroy(Object state);
   }
 
-
   public static class Result {
     public final DAG graph;
-    public final Object value;
+    public final Object rootState;
 
-    public Result(DAG graph, Object value) {
+    public Result(DAG graph, Object rootState) {
       this.graph = graph;
-      this.value = value;
+      this.rootState = rootState;
     }
   }
 
@@ -286,11 +268,12 @@ public class NoriaRT {
   public static Object read(Context ctx, long id) {
     ctx.frame.deps.add(id);
     Calc calc = ctx.values.get(id, null);
-    return calc != null ? calc.value : null;
+    return calc != null ? calc.state : null;
   }
 
   @SuppressWarnings("UnusedReturnValue")
   public static long reconcile(Context ctx, Object thunkDef, Object key, Object arg) {
+    assert !ctx.frame.childrenByKeys.containsKey(key) : "key " + key + " is not unique";
     long id =  ctx.frame.flashbacks.containsKey(key) ?
                ctx.frame.flashbacks.get(key) : ctx.nextId++;
     appendChild(ctx, key, id);
@@ -299,18 +282,22 @@ public class NoriaRT {
   }
 
   @SuppressWarnings("unused")
-  public static Result evaluate(Object thunkDef, Object arg, Function<Object, ThunkDef> middleware) {
+  public static Result evaluate(Object thunkDef, Object arg, Function<Object, Reconciler> middleware) {
     Context context = new Context(EMPTY_DAG, new TLongHashSet(), middleware);
     reconcile(context, thunkDef, ROOT_KEY, arg);
     return new Result(new DAG(context.values.forked(),
                               context.dependants.forked(),
                               context.root,
                               context.nextId),
-                      context.values.get(context.root, null).value);
+                      context.values.get(context.root, null).state);
+  }
+
+  public static void destroyGraph(DAG graph, Function<Object, Reconciler> middleware) {
+    extinct(new Context(graph, new TLongHashSet(), middleware), graph.root);
   }
 
   @SuppressWarnings("unused")
-  public static Result evaluate(DAG graph, Set<Long> dirtySet, Function<Object, ThunkDef> middleware) {
+  public static Result evaluate(DAG graph, Set<Long> dirtySet, Function<Object, Reconciler> middleware) {
     TLongHashSet dirty = new TLongHashSet();
     for (Long id : dirtySet) {
       dirty.add(id);
@@ -347,6 +334,6 @@ public class NoriaRT {
       }
     }
     return new Result(new DAG(ctx.values.forked(), ctx.dependants.forked(), ctx.root, ctx.nextId),
-                      ctx.values.get(ctx.root, null).value);
+                      ctx.values.get(ctx.root, null).state);
   }
 }
