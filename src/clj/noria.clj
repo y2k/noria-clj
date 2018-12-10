@@ -195,15 +195,17 @@
         (my-destroy! state)))))
 
 (defn fatty [thunk-def]
-  (reify t/ThunkDef
-      (up-to-date? [this state old-arg new-arg]
-        (t/up-to-date? thunk-def state old-arg new-arg))
-      (compute [this state args]
-        (t/compute thunk-def state args))
-      (changed? [this old-value new-value]
-        true)
-      (destroy! [this state]
-        (t/destroy! thunk-def state))))
+  (with-meta
+    (reify t/ThunkDef
+           (up-to-date? [this state old-arg new-arg]
+                        (t/up-to-date? thunk-def state old-arg new-arg))
+           (compute [this state args]
+                    (t/compute thunk-def state args))
+           (changed? [this old-value new-value]
+                     true)
+           (destroy! [this state]
+                     (t/destroy! thunk-def state)))
+    (meta thunk-def)))
 
 (def ^:dynamic *updates* nil)
 (def ^:dynamic *next-node* nil)
