@@ -17,11 +17,24 @@
   (up-to-date? [this state old-arg new-arg])
   (changed? [this old-value new-value]))
 
+(defn applyv [f ^clojure.lang.IPersistentVector av]
+  (case (.length av)
+    0 (f)
+    1 (f (.nth av 0))
+    2 (f (.nth av 0) (.nth av 1))
+    3 (f (.nth av 0) (.nth av 1) (.nth av 2))
+    4 (f (.nth av 0) (.nth av 1) (.nth av 2) (.nth av 3))
+    5 (f (.nth av 0) (.nth av 1) (.nth av 2) (.nth av 3) (.nth av 4))
+    6 (f (.nth av 0) (.nth av 1) (.nth av 2) (.nth av 3) (.nth av 4) (.nth av 5))
+    (apply f av)))
+
 (extend-protocol ThunkDef
   clojure.lang.AFn
   (up-to-date? [this state old-arg new-arg] (= old-arg new-arg))
   (compute [this state args]
-    [state (apply this args)])
+    (if (vector? args)
+      [state (applyv this args)]
+      [state (apply this args)]))
   (changed? [this old-value new-value] (not= old-value new-value))
   (destroy! [this state]))
 
