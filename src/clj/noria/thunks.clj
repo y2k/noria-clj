@@ -86,14 +86,14 @@
                                                                     {:noria/id (.-id (.-frame ^noria.NoriaRT$Context ctx))}
                                                                     state) arg)]
                                       (.set >-ctx-< old-ctx)
-                                      [(assoc state'
-                                              :noria/arg arg
-                                              :noria/value value')
-                                       value'])))
+                                      (noria.NoriaRT$Propagation.
+                                        [(assoc state'
+                                                :noria/arg arg
+                                                :noria/value value')
+                                         value']
+                                        (boolean (changed? thing value value'))))))
                                 (needsReconcile [this [state value] arg]
                                   (boolean (up-to-date? thing state (:noria/arg state) arg)))
-                                (shouldPropagate [this [state value] [state' value']]
-                                  (boolean (changed? thing value value')))
                                 (destroy [this [state value]]
                                   (destroy! thing state))))))
         old-ctx (.get >-ctx-<)

@@ -177,9 +177,9 @@ public class NoriaRT {
       Frame currentFrame = ctx.frame;
       Frame newFrame = new Frame(calc == null ? EMPTY_FLASHBACKS : calc.childrenByKeys, id);
       ctx.frame = newFrame;
-      Object newState = reconcilerImpl.reconcile(ctx, calc == null ? null : calc.state, arg);
+      Propagation p = reconcilerImpl.reconcile(ctx, calc == null ? null : calc.state, arg);
       ctx.upToDate.add(id);
-      if (calc != null && reconcilerImpl.shouldPropagate(calc.state, newState)) {
+      if (calc != null && p.propagate) {
         ctx.triggers.add(id);
         ctx.newTriggers.add(id);
       }
@@ -187,7 +187,7 @@ public class NoriaRT {
       if (calc != null) {
         gc(ctx, calc.childrenOrder, newFrame.childrenOrder);
       }
-      Calc newCalc = new Calc(newState,
+      Calc newCalc = new Calc(p.state,
                               arg,
                               reconciler,
                               newFrame.deps,
@@ -247,10 +247,19 @@ public class NoriaRT {
 
   ////////////////////////////////        API       /////////////////////////////////////////////
 
+  public static class Propagation {
+    public final Object state;
+    public final boolean propagate;
+
+    Propagation(Object state, boolean propagate) {
+      this.state = state;
+      this.propagate = propagate;
+    }
+  }
+
   public interface Reconciler {
     boolean needsReconcile(Object state, Object newArg);
-    Object reconcile(NoriaRT.Context context, Object state, Object arg);
-    boolean shouldPropagate(Object oldState, Object newState);
+    Propagation reconcile(NoriaRT.Context context, Object state, Object arg);
     void destroy(Object state);
   }
 
