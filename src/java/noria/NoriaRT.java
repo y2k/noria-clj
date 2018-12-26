@@ -251,7 +251,7 @@ public class NoriaRT {
     public final Object state;
     public final boolean propagate;
 
-    Propagation(Object state, boolean propagate) {
+    public Propagation(Object state, boolean propagate) {
       this.state = state;
       this.propagate = propagate;
     }
