@@ -173,7 +173,7 @@ public class NoriaRT {
         ctx.dirtySet.contains(id) ||
         intersects(ctx.triggers, calc.deps) ||
         reconciler != calc.reconciler ||
-        !reconcilerImpl.needsReconcile(calc.state, arg)) {
+        reconcilerImpl.needsReconcile(calc.state, arg)) {
       Frame currentFrame = ctx.frame;
       Frame newFrame = new Frame(calc == null ? EMPTY_FLASHBACKS : calc.childrenByKeys, id);
       ctx.frame = newFrame;
@@ -251,7 +251,7 @@ public class NoriaRT {
     public final Object state;
     public final boolean propagate;
 
-    Propagation(Object state, boolean propagate) {
+    public Propagation(Object state, boolean propagate) {
       this.state = state;
       this.propagate = propagate;
     }
@@ -273,14 +273,12 @@ public class NoriaRT {
     }
   }
 
-  @SuppressWarnings("unused")
   public static Object read(Context ctx, long id) {
     ctx.frame.deps.add(id);
     Calc calc = ctx.values.get(id, null);
     return calc != null ? calc.state : null;
   }
 
-  @SuppressWarnings("UnusedReturnValue")
   public static long reconcile(Context ctx, Object reconciler, Object key, Object arg) {
     assert !ctx.frame.childrenByKeys.containsKey(key) : "key " + key + " is not unique";
     long id =  ctx.frame.flashbacks.containsKey(key) ?
@@ -290,7 +288,6 @@ public class NoriaRT {
     return id;
   }
 
-  @SuppressWarnings("unused")
   public static Result evaluate(Object reconciler, Object arg, Function<Object, Reconciler> middleware) {
     Context context = new Context(EMPTY_DAG, new TLongHashSet(), middleware);
     reconcile(context, reconciler, ROOT_KEY, arg);
@@ -306,7 +303,7 @@ public class NoriaRT {
   }
 
   @SuppressWarnings("unused")
-  public static Result evaluate(DAG graph, Set<Long> dirtySet, Function<Object, Reconciler> middleware) {
+  public static Result revaluate(DAG graph, Set<Long> dirtySet, Function<Object, Reconciler> middleware) {
     TLongHashSet dirty = new TLongHashSet();
     for (Long id : dirtySet) {
       dirty.add(id);

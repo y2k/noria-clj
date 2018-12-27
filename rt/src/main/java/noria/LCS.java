@@ -6,7 +6,7 @@ import gnu.trove.TObjectHashingStrategy;
 
 import java.util.*;
 
-@SuppressWarnings({"unused", "AssignmentToForLoopParameter", "IfStatementWithIdenticalBranches"})
+@SuppressWarnings({"AssignmentToForLoopParameter", "IfStatementWithIdenticalBranches"})
 public class LCS {
 
   public static long[] lcs(long[] a, long[] b) {
@@ -79,7 +79,7 @@ public class LCS {
     return result;
   }
 
-  interface OrderUpdater {
+  public interface OrderUpdater {
     void add(int index, Object value);
 
     void remove(int index);
@@ -102,7 +102,7 @@ public class LCS {
     else {
       long[] lcs = lcs(oldList, newList);
       TLongHashSet set = new TLongHashSet(lcs);
-      for (int i = 0; i < oldList.length; i++) {
+      for (int i = oldList.length-1; i >= 0; i--) {
         if (!set.contains(oldList[i])) {
           updater.remove(i);
         }
@@ -132,9 +132,10 @@ public class LCS {
     }
     else {
       Object[] lcs = lcsObjects(oldList, newList);
+      @SuppressWarnings("unchecked")
       THashSet<Object> set = new THashSet<>(TObjectHashingStrategy.IDENTITY);
       Collections.addAll(set, lcs);
-      for (int i = 0; i < oldList.length; i++) {
+      for (int i = oldList.length-1; i >= 0; i--) {
         if (!set.contains(oldList[i])) {
           updater.remove(i);
         }

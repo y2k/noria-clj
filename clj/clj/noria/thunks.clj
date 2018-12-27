@@ -80,7 +80,7 @@
                                          value']
                                         (boolean (changed? thing value value'))))))
                                 (needsReconcile [this [state value] arg]
-                                  (boolean (up-to-date? thing state (:noria/arg state) arg)))
+                                  (not (boolean (up-to-date? thing state (:noria/arg state) arg))))
                                 (destroy [this [state value]]
                                   (destroy! thing state))))))
         old-ctx (.get >-ctx-<)
@@ -97,9 +97,9 @@
                  (meta f))
         ^noria.NoriaRT$Result result (cond
                                  (nil? f) (noria.NoriaRT/destroyGraph graph, middleware-impl)
-                                 (some? graph) (noria.NoriaRT/evaluate ^noria.NoriaRT$DAG graph
-                                                                       ^java.util.Set dirty-set
-                                                                       ^java.util.function.Function middleware-impl)
+                                 (some? graph) (noria.NoriaRT/revaluate ^noria.NoriaRT$DAG graph
+                                                                        ^java.util.Set dirty-set
+                                                                        ^java.util.function.Function middleware-impl)
                                  :else (noria.NoriaRT/evaluate ^Object f-impl
                                                                ^Object args-vector
                                                                ^java.util.function.Function middleware-impl))]
