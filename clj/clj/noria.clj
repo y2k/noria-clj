@@ -194,6 +194,19 @@
       (destroy! [this state]
         (my-destroy! state)))))
 
+(def on-mount
+  (thunk-def {:compute (fn [state [f]]
+                         (if (::mounted? state)
+                           [state nil]
+                           (do (f)
+                             [(assoc state ::mounted? true) nil])))}))
+(def on-unmount
+  (thunk-def {:compute (fn [state [f]]
+                         [(assoc state ::f f) nil])
+              :destroy! (fn [{::keys [f]}]
+                          (f))}))
+
+
 (defn fatty [thunk-def]
   (with-meta
     (reify t/ThunkDef
@@ -424,5 +437,3 @@
         ::callbacks @*callbacks*}
        (persistent! @*updates*)
        value])))
-
-
