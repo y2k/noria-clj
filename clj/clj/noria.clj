@@ -299,7 +299,7 @@
 
                           (and (nil? old-value) (some? new-value))
                           (do
-                            (swap! *updates* conj! {:noria/update-type :set-attr
+                            (swap! *updates* conj! {:noria/update-type :set-callback
                                                     :noria/node node-id
                                                     :noria/attr attr
                                                     :noria/value (if (:noria/sync (meta new-value))
@@ -309,10 +309,10 @@
 
                           (and (some? old-value) (nil? new-value))
                           (do
-                            (swap! *updates* conj! {:noria/update-type :set-attr
+                            (swap! *updates* conj! {:noria/update-type :set-callback
                                                     :noria/node node-id
                                                     :noria/attr attr
-                                                    :noria/value :-noria-handler})
+                                                    :noria/value nil})
                             (dissoc! state attr))
 
                           :else state))
@@ -335,8 +335,8 @@
                 (transient (::attrs state))
                 (::attrs state)
                 attrs)) 
-              (let [[attrs' constr updates]
-                    (reduce (fn [[attrs constr updates] [attr value]]
+              (let [[attrs' constr constr-cbs updates]
+                    (reduce (fn [[attrs constr constr-cbs updates] [attr value]]
                               (let [new-value (t/deref-or-value value)
                                     data-type (if (fn? new-value)
                                                 :callback
@@ -344,9 +344,10 @@
                                 (case data-type
                                   (:node :simple-value)
                                   (if (contains? constructor-params attr)
-                                    [(assoc! attrs attr new-value) (assoc! constr attr new-value) updates]
+                                    [(assoc! attrs attr new-value) (assoc! constr attr new-value) constr-cbs updates]
                                     [(assoc! attrs attr new-value)
                                      constr
+                                     constr-cbs
                                      (conj! updates {:noria/update-type :set-attr
                                                      :noria/value new-value
                                                      :noria/node node-id
@@ -360,22 +361,25 @@
                                                  :noria-handler-sync
                                                  :noria-handler-async)]
                                         (if (contains? constructor-params attr)
-                                          [(assoc! attrs attr cb) (assoc! constr attr cb) updates]
+                                          [(assoc! attrs attr cb) constr (assoc! constr-cbs attr cb) updates]
                                           [(assoc! attrs attr cb)
                                            constr
-                                           (conj! updates {:noria/update-type :set-attr
+                                           constr-cbs
+                                           (conj! updates {:noria/update-type :set-callback
                                                            :noria/node node-id
                                                            :noria/attr attr
                                                            :noria/value cb})])))
-                                    [attrs constr updates])
+                                    [attrs constr constr-cbs updates])
                                   :nodes-seq
                                   (let [new-nodes (init-children new-value)]
                                     (if (contains? constructor-params attr)
                                       [(assoc! attrs attr new-nodes)
                                        (assoc! constr attr new-nodes)
+                                       constr-cbs
                                        updates]
                                       [(assoc! attrs attr new-nodes)
                                        constr
+                                       constr-cbs
                                        (transduce
                                         (comp
                                          (keep t/deref-or-value)
@@ -388,7 +392,7 @@
                                         conj!
                                         updates
                                         new-value)])))))
-                            [(transient {}) (transient {}) (transient [])]
+                            [(transient {}) (transient {}) (transient {}) (transient [])]
                             attrs)]
                 (swap! *updates* (fn [u]
                                    (reduce conj!
@@ -396,7 +400,8 @@
                                                   {:noria/update-type :make-node
                                                    :noria/type type
                                                    :noria/node node-id
-                                                   :noria/constructor-parameters (persistent! constr)})
+                                                   :noria/constructor-parameters (persistent! constr)
+                                                   :noria/constructor-callbacks (persistent! constr-cbs)})
                                            (persistent! updates))))
                 (persistent! attrs')))]
         [{::attrs attrs'
