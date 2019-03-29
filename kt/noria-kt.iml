@@ -13,6 +13,9 @@
           <option name="pluginClasspaths">
             <array />
           </option>
+          <option name="errors">
+            <ArgumentParseErrors />
+          </option>
         </compilerArguments>
       </configuration>
     </facet>
@@ -30,7 +33,7 @@
     <orderEntry type="library" name="Maven: org.jetbrains.kotlin:kotlin-stdlib:1.3.11" level="project" />
     <orderEntry type="library" name="Maven: org.jetbrains.kotlin:kotlin-stdlib-common:1.3.11" level="project" />
     <orderEntry type="library" name="Maven: org.jetbrains:annotations:13.0" level="project" />
-    <orderEntry type="library" name="Maven: org.jetbrains.noria:noria-rt:0.1-SNAPSHOT" level="project" />
+    <orderEntry type="module" module-name="noria-rt" />
     <orderEntry type="library" name="Maven: io.lacuna:bifurcan:0.1.0" level="project" />
     <orderEntry type="library" name="Maven: org.jetbrains.intellij.deps:trove4j:1.0.20181211" level="project" />
   </component>
